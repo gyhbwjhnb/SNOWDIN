@@ -2,8 +2,8 @@
 
 :root {
   color-scheme: dark;
-  font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
-  background: #020617;
+  font-family: "Courier New", "SFMono-Regular", Consolas, monospace;
+  background: #262626;
 }
 
 * {
@@ -18,6 +18,26 @@ body,
 
 body {
   margin: 0;
+  background: #262626;
+  color: #fef3c7;
+}
+
+.terminal-scroll {
+  scrollbar-width: auto;
+  scrollbar-color: #d4d4d4 #262626;
+}
+
+.terminal-scroll::-webkit-scrollbar {
+  width: 16px;
+}
+
+.terminal-scroll::-webkit-scrollbar-track {
+  background: #262626;
+}
+
+.terminal-scroll::-webkit-scrollbar-thumb {
+  background: #d4d4d4;
+  border: 3px solid #262626;
 }
 
 button,
