@@ -1,12 +1,9 @@
 import { create } from "zustand";
 import {
   availableCommands,
-  directoryChildren,
-  directoryDescriptions,
-  fileContents,
+  defaultTerminalUser,
   githubUrl,
-  terminalUser,
-  type FileKey,
+  sudoTerminalUser,
   type DirectoryKey,
 } from "../data/site";
 
@@ -15,11 +12,12 @@ type HistoryEntry = {
   cwd: DirectoryKey;
   input: string;
   output: string[];
+  user: string;
 };
 
 type CommandResult = {
-  clearHistory?: boolean;
   cwd?: DirectoryKey;
+  nextUser?: string;
   openUrl?: string;
   output: string[];
 };
@@ -28,247 +26,146 @@ type TerminalState = {
   cwd: DirectoryKey;
   history: HistoryEntry[];
   prompt: string;
+  user: string;
   setPrompt: (value: string) => void;
   runCommand: (rawInput: string) => string | null;
 };
 
 export type PromptValidity = "neutral" | "valid" | "invalid";
 
-const resolveDirectory = (
-  currentDirectory: DirectoryKey,
-  target?: string,
-): DirectoryKey | null => {
-  if (!target || target === "~") {
-    return "~";
+const sansWhoamiPool = [
+  { name: "Flowey", weight: 1 },
+  { name: "Toriel", weight: 1 },
+  { name: "Papyrus", weight: 1 },
+  { name: "Asriel", weight: 1 },
+  { name: "Asgore", weight: 1 },
+  { name: "Undyne", weight: 1 },
+  { name: "Alphys", weight: 1 },
+  { name: "Sans", weight: 93 },
+] as const;
+
+const specialSansReveal = "__TYPE__:Hahaha, you found out I am Sans.";
+
+const pickSansWhoami = () => {
+  const totalWeight = sansWhoamiPool.reduce((sum, item) => sum + item.weight, 0);
+  let roll = Math.random() * totalWeight;
+
+  for (const item of sansWhoamiPool) {
+    roll -= item.weight;
+    if (roll < 0) {
+      return item.name;
+    }
   }
 
-  if (target === ".") {
-    return currentDirectory;
-  }
-
-  if (target === "..") {
-    return "~";
-  }
-
-  if (target.startsWith("~/")) {
-    return target in directoryChildren ? (target as DirectoryKey) : null;
-  }
-
-  const normalized = target.replace(/\/+$/, "");
-  const candidate =
-    currentDirectory === "~"
-      ? (`~/${normalized}` as DirectoryKey)
-      : (`${currentDirectory}/${normalized}` as DirectoryKey);
-
-  return candidate in directoryChildren ? candidate : null;
-};
-
-const resolveFile = (
-  currentDirectory: DirectoryKey,
-  target?: string,
-): FileKey | null => {
-  if (!target) {
-    return null;
-  }
-
-  const normalized = target.replace(/\/+$/, "");
-
-  if (normalized.startsWith("~/")) {
-    return normalized in fileContents ? (normalized as FileKey) : null;
-  }
-
-  const candidate =
-    currentDirectory === "~"
-      ? (`~/${normalized}` as FileKey)
-      : (`${currentDirectory}/${normalized}` as FileKey);
-
-  return candidate in fileContents ? candidate : null;
-};
-
-const directoryCandidates = (currentDirectory: DirectoryKey): string[] => {
-  const childDirectories = directoryChildren[currentDirectory]
-    .filter((item) => item.endsWith("/"))
-    .map((item) => item.replace(/\/$/, ""));
-
-  const absoluteDirectories = (Object.keys(directoryChildren) as DirectoryKey[])
-    .filter((key) => key !== "~")
-    .map((key) => key.replace(/^~\//, ""));
-
-  return [
-    "~",
-    ".",
-    "..",
-    ...childDirectories,
-    ...(currentDirectory === "~" ? [] : [currentDirectory.replace(/^~\//, "")]),
-    ...(Object.keys(directoryChildren) as DirectoryKey[]),
-    ...absoluteDirectories,
-  ];
-};
-
-const fileCandidates = (currentDirectory: DirectoryKey): string[] => {
-  const absoluteFiles = Object.keys(fileContents) as FileKey[];
-  const relativeFiles = absoluteFiles
-    .filter((file) => file.startsWith(`${currentDirectory}/`))
-    .map((file) => file.slice(currentDirectory.length + 1));
-
-  return [...relativeFiles, ...absoluteFiles];
+  return "Flowey";
 };
 
 export const getPromptValidity = (
   rawInput: string,
-  currentDirectory: DirectoryKey,
+  _currentDirectory: DirectoryKey,
+  currentUser: string,
 ): PromptValidity => {
   if (!rawInput) {
     return "neutral";
   }
 
-  const hasTrailingSpace = /\s$/.test(rawInput);
-  const trimmedStart = rawInput.trimStart();
+  const trimmed = rawInput.trim();
 
-  if (!trimmedStart) {
+  if (!trimmed) {
     return "neutral";
   }
 
-  const parts = trimmedStart.split(/\s+/);
-  const commandPart = parts[0].toLowerCase();
-  const hasCommandSpace = trimmedStart.includes(" ") || hasTrailingSpace;
-
-  if (!hasCommandSpace) {
-    return availableCommands.includes(
-      commandPart as (typeof availableCommands)[number],
-    )
-      ? "valid"
-      : "invalid";
-  }
-
-  if (
-    !availableCommands.includes(
-      commandPart as (typeof availableCommands)[number],
-    )
-  ) {
+  if (trimmed.includes(" ")) {
     return "invalid";
   }
 
-  const argumentPart = trimmedStart.slice(parts[0].length).trimStart();
+  const validCommands =
+    currentUser === sudoTerminalUser
+      ? [...availableCommands, "exit"]
+      : [...availableCommands];
 
-  switch (commandPart) {
-    case "help":
-    case "whoami":
-    case "ls":
-    case "github":
-      return argumentPart ? "invalid" : "valid";
-    case "cd":
-      if (!argumentPart) {
-        return rawInput.endsWith(" ") ? "invalid" : "valid";
-      }
-
-      return directoryCandidates(currentDirectory).some(
-        (candidate) => candidate === argumentPart,
-      )
-        ? "valid"
-        : "invalid";
-    case "cat":
-      if (!argumentPart) {
-        return rawInput.endsWith(" ") ? "invalid" : "valid";
-      }
-
-      return fileCandidates(currentDirectory).some(
-        (candidate) => candidate === argumentPart,
-      )
-        ? "valid"
-        : "invalid";
-    default:
-      return "invalid";
-  }
+  return validCommands.includes(trimmed) ? "valid" : "invalid";
 };
 
 const executeCommand = (
   rawInput: string,
   currentDirectory: DirectoryKey,
+  currentUser: string,
 ): CommandResult => {
   const trimmed = rawInput.trim();
 
   if (!trimmed) {
     return {
       cwd: currentDirectory,
+      nextUser: currentUser,
       output: [],
     };
   }
 
-  const [command, ...args] = trimmed.split(/\s+/);
-  const normalizedCommand = command.toLowerCase();
+  const normalizedCommand = trimmed.toLowerCase();
 
   switch (normalizedCommand) {
     case "help":
       return {
         cwd: currentDirectory,
+        nextUser: currentUser,
         output: [
           "help\tShow this message",
           "whoami\tPrint current user",
-          "ls\tList directory contents",
-          "cd\tChange directory",
-          "cat\tRead file contents",
           "github\tOpen project GitHub page",
         ],
       };
     case "whoami":
-      return {
-        cwd: currentDirectory,
-        output: [terminalUser],
-      };
-    case "ls":
-      return {
-        cwd: currentDirectory,
-        output: [directoryChildren[currentDirectory].join("  ")],
-      };
-    case "cd": {
-      const nextDirectory = resolveDirectory(currentDirectory, args[0]);
-
-      if (!nextDirectory) {
-        const target = args[0] ?? "";
+      if (currentUser === sudoTerminalUser) {
+        const selectedName = pickSansWhoami();
 
         return {
           cwd: currentDirectory,
-          output: [`cd: No such file or directory: ${target}`],
-        };
-      }
-
-      return {
-        cwd: nextDirectory,
-        output: [`Moved to ${directoryDescriptions[nextDirectory]}`],
-      };
-    }
-    case "cat": {
-      if (!args[0]) {
-        return {
-          cwd: currentDirectory,
-          output: ["cat: Missing file operand"],
-        };
-      }
-
-      const file = resolveFile(currentDirectory, args[0]);
-
-      if (!file) {
-        return {
-          cwd: currentDirectory,
-          output: [`cat: ${args[0]}: No such file or directory`],
+          nextUser: currentUser,
+          output:
+            selectedName === "Sans" ? [specialSansReveal] : [selectedName],
         };
       }
 
       return {
         cwd: currentDirectory,
-        output: [...fileContents[file]],
+        nextUser: currentUser,
+        output: [currentUser],
       };
-    }
     case "github":
       return {
         cwd: currentDirectory,
+        nextUser: currentUser,
         openUrl: githubUrl,
         output: [`Opening ${githubUrl}`],
+      };
+    case "sudo":
+      return {
+        cwd: currentDirectory,
+        nextUser: sudoTerminalUser,
+        output: [`Switched User To ${sudoTerminalUser}`],
+      };
+    case "exit":
+      if (currentUser === sudoTerminalUser) {
+        return {
+          cwd: currentDirectory,
+          nextUser: defaultTerminalUser,
+          output: [`Switched User To ${defaultTerminalUser}`],
+        };
+      }
+
+      return {
+        cwd: currentDirectory,
+        nextUser: currentUser,
+        output: [
+          `${normalizedCommand}: Command not found`,
+          'Type "help" to view available commands.',
+        ],
       };
     default:
       return {
         cwd: currentDirectory,
+        nextUser: currentUser,
         output: [
           `${normalizedCommand}: Command not found`,
           'Type "help" to view available commands.',
@@ -284,6 +181,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       id: 0,
       cwd: "~",
       input: "",
+      user: defaultTerminalUser,
       output: [
         "      ┌---------------------------------------------------------┐",
         "     ███████╗███╗   ██╗ ██████╗ ██╗    ██╗██████╗ ██╗███╗   ██╗ │",
@@ -301,20 +199,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     },
   ],
   prompt: "",
+  user: defaultTerminalUser,
   setPrompt: (value) => set({ prompt: value }),
   runCommand: (rawInput) => {
     const state = get();
-    const result = executeCommand(rawInput, state.cwd);
-
-    if (result.clearHistory) {
-      set({
-        cwd: result.cwd ?? state.cwd,
-        history: [],
-        prompt: "",
-      });
-
-      return result.openUrl ?? null;
-    }
+    const result = executeCommand(rawInput, state.cwd, state.user);
 
     if (!rawInput.trim()) {
       set({ prompt: "" });
@@ -324,6 +213,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set({
       cwd: result.cwd ?? state.cwd,
       prompt: "",
+      user: result.nextUser ?? state.user,
       history: [
         ...state.history,
         {
@@ -331,6 +221,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           cwd: state.cwd,
           input: rawInput,
           output: result.output,
+          user: state.user,
         },
       ],
     });
