@@ -1,11 +1,13 @@
-import { FormEvent, useEffect, useRef } from "react";
-import { terminalUser } from "../data/site";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { defaultTerminalUser, sudoPromptUser } from "../data/site";
 import { getPromptValidity, useTerminalStore } from "../store/terminal";
 
-function PromptLabel({ cwd }: { cwd: string }) {
+function PromptLabel({ cwd, user }: { cwd: string; user: string }) {
+  const promptUser = user === defaultTerminalUser ? user : sudoPromptUser;
+
   return (
     <>
-      <span className="text-violet-400">{terminalUser}</span>
+      <span className="text-violet-400">{promptUser}</span>
       <span className="text-amber-400">:</span>
       <span className="text-amber-400">{cwd}</span>
       <span className="text-amber-400">$</span>
@@ -13,14 +15,42 @@ function PromptLabel({ cwd }: { cwd: string }) {
   );
 }
 
+function OutputLine({ line }: { line: string }) {
+  const isTypedLine = line.startsWith("__TYPE__:");
+  const fullText = isTypedLine ? line.slice("__TYPE__:".length) : line;
+  const [visibleText, setVisibleText] = useState(isTypedLine ? "" : fullText);
+
+  useEffect(() => {
+    if (!isTypedLine) {
+      return;
+    }
+
+    setVisibleText("");
+    let index = 0;
+    const intervalId = window.setInterval(() => {
+      index += 1;
+      setVisibleText(fullText.slice(0, index));
+
+      if (index >= fullText.length) {
+        window.clearInterval(intervalId);
+      }
+    }, 100);
+
+    return () => window.clearInterval(intervalId);
+  }, [fullText, isTypedLine]);
+
+  return <>{visibleText || <span className="block h-5" />}</>;
+}
+
 export function Terminal() {
   const history = useTerminalStore((state) => state.history);
   const prompt = useTerminalStore((state) => state.prompt);
   const cwd = useTerminalStore((state) => state.cwd);
+  const user = useTerminalStore((state) => state.user);
   const setPrompt = useTerminalStore((state) => state.setPrompt);
   const runCommand = useTerminalStore((state) => state.runCommand);
   const historyEndRef = useRef<HTMLDivElement | null>(null);
-  const promptValidity = getPromptValidity(prompt, cwd);
+  const promptValidity = getPromptValidity(prompt, cwd, user);
 
   useEffect(() => {
     historyEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
@@ -43,7 +73,7 @@ export function Terminal() {
           <div key={entry.id} className="mb-3">
             {entry.input || entry.id === 0 ? (
               <p className="text-lg">
-                <PromptLabel cwd={entry.cwd} /> <span className="text-amber-50">{entry.input}</span>
+                <PromptLabel cwd={entry.cwd} user={entry.user} /> <span className="text-amber-50">{entry.input}</span>
               </p>
             ) : null}
             {entry.output.map((line, index) => (
@@ -61,7 +91,7 @@ export function Terminal() {
                       </span>
                     </>
                   ) : (
-                    line || <span className="block h-5" />
+                    <OutputLine line={line} />
                   )}
                 </p>
               ))}
@@ -71,7 +101,7 @@ export function Terminal() {
           <form onSubmit={handleSubmit}>
             <label className="flex items-center gap-2">
               <span className="shrink-0 text-lg">
-                <PromptLabel cwd={cwd} />
+                <PromptLabel cwd={cwd} user={user} />
               </span>
               <input
                 autoFocus
