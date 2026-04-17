@@ -18,3 +18,23 @@
 
 - 创意来源于 [https://www.nebuu.la/](https://www.nebuu.la/)
 - 使用 [https://github.com/chenglou/pretext](https://github.com/chenglou/pretext) 技术构建
+
+## 本地部署
+
+开始前请先安装 Node.js：
+
+- 下载地址：[https://nodejs.org/zh-cn/download](https://nodejs.org/zh-cn/download)
+
+安装完成后，在项目根目录执行：
+
+```bash
+npm install
+```
+
+然后启动本地开发环境：
+
+```bash
+npm run dev
+```
+
+默认会启动在类似 `http://localhost:5173/` 的地址。
