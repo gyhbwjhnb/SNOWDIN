@@ -16,6 +16,10 @@ const FRONT_DIRECTION_EPSILON = 0.985;
 const RETURN_POSITION_EPSILON = 0.04;
 const SCREEN_RESOLUTION = { width: 1280, height: 860 };
 const INTRO_TEXT = "Click the computer to begin...";
+const DRAG_ROTATION_SENSITIVITY = 0.008;
+const DRAG_VERTICAL_SENSITIVITY = 0.01;
+const ORBIT_Y_MIN_FACTOR = -0.2;
+const ORBIT_Y_MAX_FACTOR = 0.75;
 
 const FRONT_VIEW_STEP_1 = {
   position: { x: 0, y: 0, z: 0 },
@@ -41,6 +45,7 @@ type OrbitState = {
   currentAngle: number;
   baseRadius: number;
   baseY: number;
+  orbitY: number;
   step1Radius: number;
   step1Y: number;
   step1Angle: number;
@@ -53,6 +58,11 @@ type OverlayFrame = {
   height: number;
   angle: number;
   visible: boolean;
+};
+
+type PointerCaptureTarget = EventTarget & {
+  setPointerCapture: (pointerId: number) => void;
+  releasePointerCapture: (pointerId: number) => void;
 };
 
 function alignedToWorld(x: number, y: number, z: number) {
@@ -216,6 +226,10 @@ function Scene({
   const viewDirectionRef = useRef(new THREE.Vector3(0, 0, -1));
   const interactionReadyRef = useRef(false);
   const returnCompletedRef = useRef(false);
+  const dragPointerIdRef = useRef<number | null>(null);
+  const dragLastXRef = useRef(0);
+  const dragLastYRef = useRef(0);
+  const dragActiveRef = useRef(false);
 
   const setFrontInteractive = (nextValue: boolean) => {
     if (interactionReadyRef.current === nextValue) {
@@ -250,6 +264,7 @@ function Scene({
       currentAngle: 0,
       baseRadius: distance,
       baseY: y,
+      orbitY: y,
       step1Radius: distance,
       step1Y: y,
       step1Angle: 0,
@@ -292,13 +307,13 @@ function Scene({
         const localPosition = worldToAligned(camera.position.x, camera.position.y, camera.position.z);
 
         orbit.currentAngle = Math.atan2(localPosition.z, localPosition.x);
-        orbit.baseY = localPosition.y;
+        orbit.baseY = orbit.orbitY;
       }
     } else if (cameraMode === "returning") {
       const orbit = orbitRef.current;
 
       if (orbit) {
-        orbit.baseY = 0;
+        orbit.baseY = orbit.orbitY;
       }
     }
   }, [cameraMode]);
@@ -312,11 +327,13 @@ function Scene({
     }
 
     if (modeRef.current === "orbit") {
-      orbit.currentAngle += ORBIT_SPEED * delta;
+      if (!dragActiveRef.current) {
+        orbit.currentAngle += ORBIT_SPEED * delta;
+      }
 
       const orbitPosition = alignedToWorld(
         orbit.baseRadius * Math.cos(orbit.currentAngle),
-        orbit.baseY,
+        orbit.orbitY,
         orbit.baseRadius * Math.sin(orbit.currentAngle),
       );
 
@@ -386,11 +403,73 @@ function Scene({
   return (
     <>
       <PerspectiveCamera ref={cameraRef} makeDefault fov={40} />
-      <group rotation={[0, MODEL_ROTATION_Y, 0]}>
-        <group ref={centeredModelRef} onPointerDown={(event) => {
+      <mesh
+        onPointerDown={(event) => {
+          if (modeRef.current !== "orbit") {
+            return;
+          }
+
           event.stopPropagation();
-          onModelClick();
-        }}>
+          dragPointerIdRef.current = event.pointerId;
+          dragLastXRef.current = event.clientX;
+          dragLastYRef.current = event.clientY;
+          dragActiveRef.current = true;
+          (event.target as PointerCaptureTarget | null)?.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const orbit = orbitRef.current;
+
+          if (
+            modeRef.current !== "orbit" ||
+            !dragActiveRef.current ||
+            dragPointerIdRef.current !== event.pointerId ||
+            !orbit
+          ) {
+            return;
+          }
+
+          const deltaX = event.clientX - dragLastXRef.current;
+          const deltaY = event.clientY - dragLastYRef.current;
+          dragLastXRef.current = event.clientX;
+          dragLastYRef.current = event.clientY;
+          orbit.currentAngle += deltaX * DRAG_ROTATION_SENSITIVITY;
+          orbit.baseY = THREE.MathUtils.clamp(
+            orbit.baseY + deltaY * DRAG_VERTICAL_SENSITIVITY,
+            orbit.baseRadius * ORBIT_Y_MIN_FACTOR,
+            orbit.baseRadius * ORBIT_Y_MAX_FACTOR,
+          );
+          orbit.orbitY = orbit.baseY;
+        }}
+        onPointerUp={(event) => {
+          if (dragPointerIdRef.current !== event.pointerId) {
+            return;
+          }
+
+          dragActiveRef.current = false;
+          dragPointerIdRef.current = null;
+          (event.target as PointerCaptureTarget | null)?.releasePointerCapture(event.pointerId);
+        }}
+        onPointerOut={(event) => {
+          if (dragPointerIdRef.current !== event.pointerId) {
+            return;
+          }
+
+          dragActiveRef.current = false;
+          dragPointerIdRef.current = null;
+          (event.target as PointerCaptureTarget | null)?.releasePointerCapture(event.pointerId);
+        }}
+      >
+        <sphereGeometry args={[100, 32, 32]} />
+        <meshBasicMaterial transparent opacity={0} side={THREE.BackSide} depthWrite={false} />
+      </mesh>
+      <group rotation={[0, MODEL_ROTATION_Y, 0]}>
+        <group
+          ref={centeredModelRef}
+          onClick={(event) => {
+            event.stopPropagation();
+            onModelClick();
+          }}
+        >
           <primitive object={model} dispose={null} />
         </group>
       </group>
