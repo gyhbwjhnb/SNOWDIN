@@ -2,6 +2,10 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { defaultTerminalUser, sudoPromptUser } from "../data/site";
 import { getPromptValidity, useTerminalStore } from "../store/terminal";
 
+type TerminalProps = {
+  interactive?: boolean;
+};
+
 function PromptLabel({ cwd, user }: { cwd: string; user: string }) {
   const promptUser = user === defaultTerminalUser ? user : sudoPromptUser;
 
@@ -42,7 +46,7 @@ function OutputLine({ line }: { line: string }) {
   return <>{visibleText || <span className="block h-5" />}</>;
 }
 
-export function Terminal() {
+export function Terminal({ interactive = true }: TerminalProps) {
   const history = useTerminalStore((state) => state.history);
   const prompt = useTerminalStore((state) => state.prompt);
   const cwd = useTerminalStore((state) => state.cwd);
@@ -58,6 +62,11 @@ export function Terminal() {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (!interactive) {
+      return;
+    }
+
     const url = runCommand(prompt);
 
     if (url) {
@@ -66,7 +75,7 @@ export function Terminal() {
   };
 
   return (
-    <section className="flex h-full flex-col overflow-hidden rounded-lg border border-violet-400 font-mono text-base leading-7 text-amber-50">
+    <section className="flex h-full flex-col overflow-hidden border border-violet-400 font-mono text-base leading-7 text-amber-50">
       <div className="min-h-0 flex-1 pr-8">
         <div className="terminal-scroll h-full overflow-y-scroll px-5 py-5">
         {history.map((entry) => (
@@ -104,7 +113,8 @@ export function Terminal() {
                 <PromptLabel cwd={cwd} user={user} />
               </span>
               <input
-                autoFocus
+                autoFocus={interactive}
+                disabled={!interactive}
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 spellCheck={false}
@@ -115,7 +125,7 @@ export function Terminal() {
                     : promptValidity === "invalid"
                       ? "text-red-400"
                       : "text-amber-50"
-                }`}
+                } disabled:cursor-not-allowed disabled:text-amber-50/60`}
               />
             </label>
           </form>

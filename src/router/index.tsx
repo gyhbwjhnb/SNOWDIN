@@ -6,11 +6,17 @@ export const router = createBrowserRouter([
   {
     path: "/",
     element: <App />,
-    children: [
-      {
-        index: true,
-        element: <Terminal />,
-      },
-    ],
+  },
+  {
+    path: "/terminal",
+    element: (
+      <div className="viewer">
+        <div className="embedded-screen">
+          <div className="embedded-screen-inner is-interactive">
+            <Terminal interactive />
+          </div>
+        </div>
+      </div>
+    ),
   },
 ]);

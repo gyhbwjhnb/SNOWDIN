@@ -14,27 +14,61 @@
       └---------------------------------------------------------┘
 ```
 
-## Tips
+`8028` is a Vite + React site that combines:
 
-- 创意来源于 [https://www.nebuu.la/](https://www.nebuu.la/)
-- 使用 [https://github.com/chenglou/pretext](https://github.com/chenglou/pretext) 技术构建
+- a 3D computer model viewer
+- a terminal-style personal site
+- a screen-projected terminal route rendered inside the model display flow
 
-## 本地部署
+## Current behavior
 
-开始前请先安装 Node.js：
+- Default mode uses the moving camera around the 3D computer.
+- The computer screen stays black in non-front-view mode.
+- After switching to `正视图` and fully reaching the front-facing camera position, the screen shows a Windows-style loading spinner for 3 seconds.
+- After that delay, the live terminal page is loaded through an `iframe` on the projected screen area.
+- Screen interaction is only enabled after the front-view camera is fully in place.
 
-- 下载地址：[https://nodejs.org/zh-cn/download](https://nodejs.org/zh-cn/download)
+## Routes
 
-安装完成后，在项目根目录执行：
+- `/` : main 3D computer showcase
+- `/terminal` : standalone terminal page used by the projected screen iframe
+
+## Local development
+
+Requirements:
+
+- Node.js 18+
+
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-然后启动本地开发环境：
+Start the dev server:
 
 ```bash
 npm run dev
 ```
 
-默认会启动在类似 `http://localhost:5173/` 的地址。
+Build for production:
+
+```bash
+npm run build
+```
+
+## Project notes
+
+- Main 3D screen/camera logic lives in [src/components/ComputerShowcase.tsx](C:/Users/31764/8028/src/components/ComputerShowcase.tsx).
+- Terminal UI lives in [src/components/Terminal.tsx](C:/Users/31764/8028/src/components/Terminal.tsx).
+- The computer model asset is [public/computer.glb](C:/Users/31764/8028/public/computer.glb).
+
+## Tech stack
+
+- React
+- React Router
+- Zustand
+- Three.js
+- @react-three/fiber
+- @react-three/drei
+- Vite
