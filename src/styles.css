@@ -52,6 +52,26 @@ body {
   pointer-events: none;
 }
 
+.intro-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.intro-overlay-text {
+  margin-top: 50vh;
+  color: #f5f5f5;
+  font-family: "Courier New", "SFMono-Regular", Consolas, monospace;
+  font-size: 24px;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 18px rgba(0, 0, 0, 0.55);
+  white-space: pre;
+}
+
 .control-button {
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.08);

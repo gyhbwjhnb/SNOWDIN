@@ -13,6 +13,10 @@ const Y_OFFSET = 0.28;
 const Z_OFFSET = 0.055;
 const FRONT_POSITION_EPSILON = 0.035;
 const FRONT_DIRECTION_EPSILON = 0.985;
+const RETURN_POSITION_EPSILON = 0.04;
+const SCREEN_RESOLUTION = { width: 1280, height: 860 };
+const INTRO_TEXT = "Click the computer to begin...";
+
 const FRONT_VIEW_STEP_1 = {
   position: { x: 0, y: 0, z: 0 },
   target: { x: 0, y: 0, z: -1 },
@@ -24,13 +28,14 @@ const FRONT_VIEW_STEP_2 = {
 };
 
 const MODEL_MARKERS = {
-  point_1_red: { x: -0.21 - X_OFFSET, y: 0.1 + Y_OFFSET, z: Z_OFFSET, color: "#ff4d4f", label: "1_red" },
-  point_2_green: { x: -0.21 + X_OFFSET - 0.02, y: 0.1 + Y_OFFSET, z: Z_OFFSET, color: "#52c41a", label: "2_green" },
-  point_3_blue: { x: -0.21 + X_OFFSET - 0.02, y: 0.1 - Y_OFFSET, z: Z_OFFSET, color: "#1677ff", label: "3_blue" },
-  point_4_yellow: { x: -0.21 - X_OFFSET, y: 0.1 - Y_OFFSET, z: Z_OFFSET, color: "#fadb14", label: "4_yellow" },
+  point_1_red: { x: -0.21 - X_OFFSET, y: 0.1 + Y_OFFSET, z: Z_OFFSET },
+  point_2_green: { x: -0.21 + X_OFFSET - 0.02, y: 0.1 + Y_OFFSET, z: Z_OFFSET },
+  point_3_blue: { x: -0.21 + X_OFFSET - 0.02, y: 0.1 - Y_OFFSET, z: Z_OFFSET },
+  point_4_yellow: { x: -0.21 - X_OFFSET, y: 0.1 - Y_OFFSET, z: Z_OFFSET },
 } as const;
 
-type CameraMode = "orbit" | "front";
+type CameraMode = "orbit" | "front" | "returning";
+type ExitStage = "none" | "loading" | "black" | "returning" | "pause";
 
 type OrbitState = {
   currentAngle: number;
@@ -52,6 +57,10 @@ type OverlayFrame = {
 
 function alignedToWorld(x: number, y: number, z: number) {
   return new THREE.Vector3(x, y, z).applyAxisAngle(new THREE.Vector3(0, 1, 0), MODEL_ROTATION_Y);
+}
+
+function worldToAligned(x: number, y: number, z: number) {
+  return new THREE.Vector3(x, y, z).applyAxisAngle(new THREE.Vector3(0, 1, 0), -MODEL_ROTATION_Y);
 }
 
 function forwardAngleDelta(current: number, target: number) {
@@ -87,20 +96,36 @@ function buildOverlayFrame(camera: THREE.PerspectiveCamera, width: number, heigh
   const projectedTopRight = projectToScreen(topRight, camera, width, height);
   const projectedBottomLeft = projectToScreen(bottomLeft, camera, width, height);
 
+  const overlayWidth = Math.hypot(projectedTopRight.x - projectedTopLeft.x, projectedTopRight.y - projectedTopLeft.y);
+  const overlayHeight = Math.hypot(projectedBottomLeft.x - projectedTopLeft.x, projectedBottomLeft.y - projectedTopLeft.y);
+
   return {
     x: projectedTopLeft.x,
     y: projectedTopLeft.y,
-    width: Math.hypot(projectedTopRight.x - projectedTopLeft.x, projectedTopRight.y - projectedTopLeft.y),
-    height: Math.hypot(projectedBottomLeft.x - projectedTopLeft.x, projectedBottomLeft.y - projectedTopLeft.y),
+    width: overlayWidth,
+    height: overlayHeight,
     angle: Math.atan2(projectedTopRight.y - projectedTopLeft.y, projectedTopRight.x - projectedTopLeft.x),
     visible:
       [projectedTopLeft.z, projectedTopRight.z, projectedBottomLeft.z].every((z) => z > -1 && z < 1) &&
-      Math.hypot(projectedTopRight.x - projectedTopLeft.x, projectedTopRight.y - projectedTopLeft.y) > 40 &&
-      Math.hypot(projectedBottomLeft.x - projectedTopLeft.x, projectedBottomLeft.y - projectedTopLeft.y) > 30,
+      overlayWidth > 40 &&
+      overlayHeight > 30,
   };
 }
 
-function BlackScreenPlane() {
+function ScreenPlane({ message }: { message: string }) {
+  const canvas = useMemo(() => {
+    const element = document.createElement("canvas");
+    element.width = SCREEN_RESOLUTION.width;
+    element.height = SCREEN_RESOLUTION.height;
+    return element;
+  }, []);
+
+  const texture = useMemo(() => {
+    const nextTexture = new THREE.CanvasTexture(canvas);
+    nextTexture.colorSpace = THREE.SRGBColorSpace;
+    return nextTexture;
+  }, [canvas]);
+
   const screenGeometry = useMemo(() => {
     const topLeft = MODEL_MARKERS.point_1_red;
     const topRight = MODEL_MARKERS.point_2_green;
@@ -134,10 +159,35 @@ function BlackScreenPlane() {
     return geometry;
   }, []);
 
+  useEffect(() => {
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      return;
+    }
+
+    const width = canvas.width;
+    const height = canvas.height;
+
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = "#141414";
+    context.fillRect(0, 0, width, height);
+
+    if (message) {
+      context.fillStyle = "#f5f5f5";
+      context.font = '34px "Segoe UI", sans-serif';
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(message, width / 2, height * 0.72);
+    }
+
+    texture.needsUpdate = true;
+  }, [canvas, message, texture]);
+
   return (
     <group rotation={[0, MODEL_ROTATION_Y, 0]}>
       <mesh geometry={screenGeometry}>
-        <meshBasicMaterial color="#141414" toneMapped={false} side={THREE.DoubleSide} />
+        <meshBasicMaterial map={texture} toneMapped={false} side={THREE.DoubleSide} />
       </mesh>
     </group>
   );
@@ -147,10 +197,14 @@ function Scene({
   cameraMode,
   onFrontInteractiveChange,
   onOverlayFrame,
+  onModelClick,
+  onReturnComplete,
 }: {
   cameraMode: CameraMode;
   onFrontInteractiveChange: (interactive: boolean) => void;
   onOverlayFrame: (frame: OverlayFrame) => void;
+  onModelClick: () => void;
+  onReturnComplete: () => void;
 }) {
   const { scene } = useGLTF("/computer.glb");
   const model = useMemo(() => scene.clone(true), [scene]);
@@ -161,6 +215,7 @@ function Scene({
   const frontStepRef = useRef(0);
   const viewDirectionRef = useRef(new THREE.Vector3(0, 0, -1));
   const interactionReadyRef = useRef(false);
+  const returnCompletedRef = useRef(false);
 
   const setFrontInteractive = (nextValue: boolean) => {
     if (interactionReadyRef.current === nextValue) {
@@ -213,6 +268,7 @@ function Scene({
   useLayoutEffect(() => {
     modeRef.current = cameraMode;
     setFrontInteractive(false);
+    returnCompletedRef.current = false;
 
     if (cameraMode === "front") {
       const camera = cameraRef.current;
@@ -221,10 +277,28 @@ function Scene({
       frontStepRef.current = 0;
 
       if (camera && orbit) {
-        orbit.step1Radius = Math.hypot(camera.position.x, camera.position.z);
-        orbit.step1Y = camera.position.y;
-        orbit.step1Angle = Math.atan2(camera.position.z, camera.position.x);
+        const localPosition = worldToAligned(camera.position.x, camera.position.y, camera.position.z);
+
+        orbit.step1Radius = Math.hypot(localPosition.x, localPosition.z);
+        orbit.step1Y = localPosition.y;
+        orbit.step1Angle = Math.atan2(localPosition.z, localPosition.x);
         viewDirectionRef.current.copy(new THREE.Vector3(0, 0, 0).sub(camera.position).normalize());
+      }
+    } else if (cameraMode === "orbit") {
+      const camera = cameraRef.current;
+      const orbit = orbitRef.current;
+
+      if (camera && orbit) {
+        const localPosition = worldToAligned(camera.position.x, camera.position.y, camera.position.z);
+
+        orbit.currentAngle = Math.atan2(localPosition.z, localPosition.x);
+        orbit.baseY = localPosition.y;
+      }
+    } else if (cameraMode === "returning") {
+      const orbit = orbitRef.current;
+
+      if (orbit) {
+        orbit.baseY = 0;
       }
     }
   }, [cameraMode]);
@@ -250,7 +324,7 @@ function Scene({
       camera.up.set(0, 1, 0);
       camera.lookAt(0, 0, 0);
       setFrontInteractive(false);
-    } else if (frontStepRef.current === 0) {
+    } else if (modeRef.current === "front" && frontStepRef.current === 0) {
       const step = getFrontStep(0, orbit.step1Radius);
       const targetAngle = Math.atan2(step.position.z, step.position.x);
 
@@ -264,7 +338,7 @@ function Scene({
         orbit.step1Radius * Math.sin(orbit.step1Angle),
       );
 
-      camera.position.copy(stepOnePosition);
+      camera.position.copy(alignedToWorld(stepOnePosition.x, stepOnePosition.y, stepOnePosition.z));
       camera.up.set(0, 1, 0);
       viewDirectionRef.current.copy(new THREE.Vector3(0, 0, 0).sub(camera.position).normalize());
       camera.lookAt(0, 0, 0);
@@ -273,7 +347,7 @@ function Scene({
       if (forwardAngleDelta(orbit.step1Angle, targetAngle) < FRONT_STEP_EPSILON) {
         frontStepRef.current = 1;
       }
-    } else {
+    } else if (modeRef.current === "front") {
       const step = getFrontStep(1, orbit.baseRadius);
       const frontPosition = alignedToWorld(step.position.x, step.position.y, step.position.z);
       const frontDirection = alignedToWorld(step.target.x, step.target.y, step.target.z).normalize();
@@ -289,6 +363,20 @@ function Scene({
       const positionReady = camera.position.distanceTo(frontPosition) < FRONT_POSITION_EPSILON;
       const directionReady = viewDirectionRef.current.dot(frontDirection) > FRONT_DIRECTION_EPSILON;
       setFrontInteractive(positionReady && directionReady);
+    } else {
+      const returnPosition = alignedToWorld(0, 0, orbit.baseRadius);
+
+      camera.position.x = THREE.MathUtils.damp(camera.position.x, returnPosition.x, CAMERA_DAMPING, delta);
+      camera.position.y = THREE.MathUtils.damp(camera.position.y, returnPosition.y, CAMERA_DAMPING, delta);
+      camera.position.z = THREE.MathUtils.damp(camera.position.z, returnPosition.z, CAMERA_DAMPING, delta);
+      camera.up.set(0, 1, 0);
+      camera.lookAt(0, 0, 0);
+      setFrontInteractive(false);
+
+      if (!returnCompletedRef.current && camera.position.distanceTo(returnPosition) < RETURN_POSITION_EPSILON) {
+        returnCompletedRef.current = true;
+        onReturnComplete();
+      }
     }
 
     camera.updateMatrixWorld();
@@ -299,11 +387,14 @@ function Scene({
     <>
       <PerspectiveCamera ref={cameraRef} makeDefault fov={40} />
       <group rotation={[0, MODEL_ROTATION_Y, 0]}>
-        <group ref={centeredModelRef}>
+        <group ref={centeredModelRef} onPointerDown={(event) => {
+          event.stopPropagation();
+          onModelClick();
+        }}>
           <primitive object={model} dispose={null} />
         </group>
       </group>
-      <BlackScreenPlane />
+      <ScreenPlane message="" />
     </>
   );
 }
@@ -314,11 +405,41 @@ export function ComputerShowcase() {
   const [iframeVisible, setIframeVisible] = useState(false);
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [loadingVisible, setLoadingVisible] = useState(false);
+  const [typedIntro, setTypedIntro] = useState("");
+  const [exitStage, setExitStage] = useState<ExitStage>("none");
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const showLoading = loadingVisible || (iframeVisible && !iframeLoaded);
 
   useEffect(() => {
-    if (!frontInteractive) {
+    if (cameraMode !== "orbit" || exitStage !== "none") {
+      setTypedIntro("");
+      return;
+    }
+
+    setTypedIntro("");
+    let intervalId = 0;
+    const startTimeoutId = window.setTimeout(() => {
+      let index = 0;
+      intervalId = window.setInterval(() => {
+        index += 1;
+        setTypedIntro(INTRO_TEXT.slice(0, index));
+
+        if (index >= INTRO_TEXT.length) {
+          window.clearInterval(intervalId);
+        }
+      }, 65);
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(startTimeoutId);
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [cameraMode, exitStage]);
+
+  useEffect(() => {
+    if (!frontInteractive || exitStage !== "none") {
       setIframeVisible(false);
       setIframeLoaded(false);
       setLoadingVisible(false);
@@ -332,7 +453,55 @@ export function ComputerShowcase() {
     }, 3000);
 
     return () => window.clearTimeout(timeoutId);
-  }, [frontInteractive]);
+  }, [frontInteractive, exitStage]);
+
+  useEffect(() => {
+    if (exitStage === "loading") {
+      const timeoutId = window.setTimeout(() => {
+        setLoadingVisible(false);
+        setExitStage("black");
+      }, 1000);
+
+      return () => window.clearTimeout(timeoutId);
+    }
+
+    if (exitStage === "black") {
+      const timeoutId = window.setTimeout(() => {
+        setCameraMode("returning");
+        setExitStage("returning");
+      }, 1000);
+
+      return () => window.clearTimeout(timeoutId);
+    }
+
+    if (exitStage === "pause") {
+      const timeoutId = window.setTimeout(() => {
+        setExitStage("none");
+        setCameraMode("orbit");
+      }, 1000);
+
+      return () => window.clearTimeout(timeoutId);
+    }
+  }, [exitStage]);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      if (event.data?.type === "terminal-exit") {
+        setIframeVisible(false);
+        setIframeLoaded(false);
+        setLoadingVisible(true);
+        setExitStage("loading");
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
 
   const handleOverlayFrame = (frame: OverlayFrame) => {
     const overlay = overlayRef.current;
@@ -350,17 +519,6 @@ export function ComputerShowcase() {
 
   return (
     <div className="viewer">
-      <div className="controls">
-        <button className="control-button" type="button" onClick={() => setCameraMode("front")}>
-          正视图
-        </button>
-        <button className="control-button" type="button" onClick={() => setCameraMode("orbit")}>
-          继续环绕
-        </button>
-      </div>
-      <div className="controls controls-status">
-        <div className="control-button control-button-static">{frontInteractive ? "终端已解锁" : "终端锁定中"}</div>
-      </div>
       <div className="screen-overlay-layer">
         <div ref={overlayRef} className="screen-overlay-frame">
           {showLoading ? (
@@ -388,6 +546,11 @@ export function ComputerShowcase() {
           ) : null}
         </div>
       </div>
+      {cameraMode === "orbit" ? (
+        <div className="intro-overlay">
+          <div className="intro-overlay-text">{typedIntro}</div>
+        </div>
+      ) : null}
       <Canvas frameloop="always">
         <color attach="background" args={["#1f1f1f"]} />
         <ambientLight intensity={1.5} />
@@ -397,6 +560,16 @@ export function ComputerShowcase() {
           cameraMode={cameraMode}
           onFrontInteractiveChange={setFrontInteractive}
           onOverlayFrame={handleOverlayFrame}
+          onModelClick={() => {
+            if (cameraMode === "orbit") {
+              setCameraMode("front");
+            }
+          }}
+          onReturnComplete={() => {
+            if (exitStage === "returning") {
+              setExitStage("pause");
+            }
+          }}
         />
       </Canvas>
     </div>
