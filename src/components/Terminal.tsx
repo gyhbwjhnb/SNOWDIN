@@ -67,6 +67,16 @@ export function Terminal({ interactive = true }: TerminalProps) {
       return;
     }
 
+    const normalizedPrompt = prompt.trim().toLowerCase();
+
+    if (normalizedPrompt === "exit" && user === defaultTerminalUser) {
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: "terminal-exit" }, window.location.origin);
+      }
+
+      return;
+    }
+
     const url = runCommand(prompt);
 
     if (url) {

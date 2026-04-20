@@ -82,7 +82,7 @@ export const getPromptValidity = (
   const validCommands =
     currentUser === sudoTerminalUser
       ? [...availableCommands, "exit"]
-      : [...availableCommands];
+      : [...availableCommands, "exit"];
 
   return validCommands.includes(trimmed) ? "valid" : "invalid";
 };
