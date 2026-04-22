@@ -529,7 +529,7 @@ export function ComputerShowcase() {
     const timeoutId = window.setTimeout(() => {
       setLoadingVisible(false);
       setIframeVisible(true);
-    }, 3000);
+    }, 1500);
 
     return () => window.clearTimeout(timeoutId);
   }, [frontInteractive, exitStage]);
