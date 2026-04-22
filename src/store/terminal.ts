@@ -3,6 +3,7 @@ import {
   availableCommands,
   defaultTerminalUser,
   githubUrl,
+  isSudoIdentity,
   sudoTerminalUser,
   type DirectoryKey,
 } from "../data/site";
@@ -23,10 +24,12 @@ type CommandResult = {
 };
 
 type TerminalState = {
+  controlMode: boolean;
   cwd: DirectoryKey;
   history: HistoryEntry[];
   prompt: string;
   user: string;
+  exitControlMode: () => void;
   setPrompt: (value: string) => void;
   runCommand: (rawInput: string) => string | null;
 };
@@ -45,6 +48,21 @@ const sansWhoamiPool = [
 ] as const;
 
 const specialSansReveal = "__TYPE__:Hahaha, you found out I am Sans.";
+
+const initialTerminalOutput = [
+        "      ┌---------------------------------------------------------┐",
+        "     ███████╗███╗   ██╗ ██████╗ ██╗    ██╗██████╗ ██╗███╗   ██╗ │",
+        "     ██╔════╝████╗  ██║██╔═══██╗██║    ██║██╔══██╗██║████╗  ██║ │",
+        "     ███████╗██╔██╗ ██║██║   ██║██║ █╗ ██║██║  ██║██║██╔██╗ ██║ │",
+        "     ╚════██║██║╚██╗██║██║   ██║██║███╗██║██║  ██║██║██║╚██╗██║ │",
+        "     ███████║██║ ╚████║╚██████╔╝╚███╔███╔╝██████╔╝██║██║ ╚████║ │",
+        "     ╚══════╝╚═╝  ╚═══╝ ╚═════╝  ╚══╝╚══╝ ╚═════╝ ╚═╝╚═╝  ╚═══╝ │",
+        "      │                                                         │",
+        "      │                              Welcome to Snowdin         │",
+        "      │                                                         │",
+        "      └---------------------------------------------------------┘",
+        "Type 'help' to see the list of available commands.",
+] as const;
 
 const pickSansWhoami = () => {
   const totalWeight = sansWhoamiPool.reduce((sum, item) => sum + item.weight, 0);
@@ -79,10 +97,9 @@ export const getPromptValidity = (
     return "invalid";
   }
 
-  const validCommands =
-    currentUser === sudoTerminalUser
-      ? [...availableCommands, "exit"]
-      : [...availableCommands, "exit"];
+  const validCommands = isSudoIdentity(currentUser)
+    ? [...availableCommands, "exit"]
+    : [...availableCommands.filter((command) => command !== "control"), "exit"];
 
   return validCommands.includes(trimmed) ? "valid" : "invalid";
 };
@@ -113,17 +130,19 @@ const executeCommand = (
           "help\tShow this message",
           "whoami\tPrint current user",
           "github\tOpen project GitHub page",
+          ...(isSudoIdentity(currentUser)
+            ? ["control\tControl the sprite with WASD, Shift and Esc"]
+            : []),
         ],
       };
     case "whoami":
-      if (currentUser === sudoTerminalUser) {
+      if (isSudoIdentity(currentUser)) {
         const selectedName = pickSansWhoami();
 
         return {
           cwd: currentDirectory,
           nextUser: currentUser,
-          output:
-            selectedName === "Sans" ? [specialSansReveal] : [selectedName],
+          output: selectedName === "Sans" ? [specialSansReveal] : [selectedName],
         };
       }
 
@@ -145,8 +164,28 @@ const executeCommand = (
         nextUser: sudoTerminalUser,
         output: [`Switched User To ${sudoTerminalUser}`],
       };
+    case "control":
+      if (!isSudoIdentity(currentUser)) {
+        return {
+          cwd: currentDirectory,
+          nextUser: currentUser,
+          output: [
+            `${normalizedCommand}: Command not found`,
+            'Type "help" to view available commands.',
+          ],
+        };
+      }
+
+      return {
+        cwd: currentDirectory,
+        nextUser: currentUser,
+        output: [
+          "Control mode enabled.",
+          "Use WASD to move, hold Shift to accelerate, press Esc to exit control mode.",
+        ],
+      };
     case "exit":
-      if (currentUser === sudoTerminalUser) {
+      if (isSudoIdentity(currentUser)) {
         return {
           cwd: currentDirectory,
           nextUser: defaultTerminalUser,
@@ -175,6 +214,7 @@ const executeCommand = (
 };
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
+  controlMode: false,
   cwd: "~",
   history: [
     {
@@ -182,28 +222,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       cwd: "~",
       input: "",
       user: defaultTerminalUser,
-      output: [
-        "      ┌---------------------------------------------------------┐",
-        "     ███████╗███╗   ██╗ ██████╗ ██╗    ██╗██████╗ ██╗███╗   ██╗ │",
-        "     ██╔════╝████╗  ██║██╔═══██╗██║    ██║██╔══██╗██║████╗  ██║ │",
-        "     ███████╗██╔██╗ ██║██║   ██║██║ █╗ ██║██║  ██║██║██╔██╗ ██║ │",
-        "     ╚════██║██║╚██╗██║██║   ██║██║███╗██║██║  ██║██║██║╚██╗██║ │",
-        "     ███████║██║ ╚████║╚██████╔╝╚███╔███╔╝██████╔╝██║██║ ╚████║ │",
-        "     ╚══════╝╚═╝  ╚═══╝ ╚═════╝  ╚══╝╚══╝ ╚═════╝ ╚═╝╚═╝  ╚═══╝ │",
-        "      │                                                         │",
-        "      │                              Welcome to Snowdin         │",
-        "      │                                                         │",
-        "      └---------------------------------------------------------┘",
-        "Type 'help' to see the list of available commands.",
-      ],
+      output: [...initialTerminalOutput],
     },
   ],
   prompt: "",
   user: defaultTerminalUser,
+  exitControlMode: () => set({ controlMode: false }),
   setPrompt: (value) => set({ prompt: value }),
   runCommand: (rawInput) => {
     const state = get();
     const result = executeCommand(rawInput, state.cwd, state.user);
+    const normalizedInput = rawInput.trim().toLowerCase();
 
     if (!rawInput.trim()) {
       set({ prompt: "" });
@@ -211,6 +240,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
 
     set({
+      controlMode:
+        normalizedInput === "control" && isSudoIdentity(state.user)
+          ? true
+          : result.nextUser === defaultTerminalUser
+            ? false
+            : state.controlMode,
       cwd: result.cwd ?? state.cwd,
       prompt: "",
       user: result.nextUser ?? state.user,
