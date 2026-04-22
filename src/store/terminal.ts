@@ -31,7 +31,7 @@ type TerminalState = {
   history: HistoryEntry[];
   prompt: string;
   user: string;
-  exitControlMode: () => void;
+  exitControlMode: (outputLine?: string) => void;
   setPrompt: (value: string) => void;
   runCommand: (rawInput: string) => string | null;
 };
@@ -222,7 +222,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   ],
   prompt: "",
   user: defaultTerminalUser,
-  exitControlMode: () => set({ controlMode: false }),
+  exitControlMode: (outputLine) =>
+    set((state) => ({
+      controlMode: false,
+      history:
+        outputLine && state.history.length > 0
+          ? [
+              ...state.history.slice(0, -1),
+              {
+                ...state.history[state.history.length - 1],
+                output: [...state.history[state.history.length - 1].output, outputLine],
+              },
+            ]
+          : state.history,
+    })),
   setPrompt: (value) => set({ prompt: value }),
   runCommand: (rawInput) => {
     const state = get();

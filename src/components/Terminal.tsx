@@ -124,6 +124,7 @@ type ReflowOverlayProps = {
   contentWidth: number;
   cwd: string;
   history: ReturnType<typeof useTerminalStore.getState>["history"];
+  introPrompt?: { cwd: string; user: string } | null;
   interactive: boolean;
   prompt: string;
   showPrompt: boolean;
@@ -355,12 +356,14 @@ function buildReflowBlocks(
   history: ReturnType<typeof useTerminalStore.getState>["history"],
   {
     cwd,
+    introPrompt,
     interactive,
     prompt,
     showPrompt,
     user,
   }: {
     cwd: string;
+    introPrompt?: { cwd: string; user: string } | null;
     interactive: boolean;
     prompt: string;
     showPrompt: boolean;
@@ -368,6 +371,32 @@ function buildReflowBlocks(
   },
 ): ReflowBlock[] {
   const blocks: ReflowBlock[] = [];
+
+  if (introPrompt) {
+    const promptUser =
+      introPrompt.user === defaultTerminalUser
+        ? introPrompt.user
+        : isSudoIdentity(introPrompt.user)
+          ? sudoPromptUser
+          : introPrompt.user;
+    const promptText = `${promptUser}:${introPrompt.cwd}$`;
+
+    blocks.push({
+      avoidSprite: true,
+      className: "is-prompt",
+      displayText: makeFlexibleBreakText(promptText),
+      font: reflowFont,
+      id: "prompt-intro",
+      lineHeight: reflowLineHeight,
+      naturalText: promptText,
+      parts: {
+        kind: "prompt",
+        cwd: introPrompt.cwd,
+        input: "",
+        user: introPrompt.user,
+      },
+    });
+  }
 
   history.forEach((entry) => {
     if (entry.input || entry.id === 0) {
@@ -474,6 +503,7 @@ function buildReflowLayout({
   contentWidth,
   cwd,
   history,
+  introPrompt,
   interactive,
   prompt,
   showPrompt,
@@ -485,6 +515,7 @@ function buildReflowLayout({
 }: ReflowOverlayProps): { contentHeight: number; lines: ReflowLine[] } {
   const blocks = buildReflowBlocks(history, {
     cwd,
+    introPrompt,
     interactive,
     prompt,
     showPrompt,
@@ -621,6 +652,7 @@ function TerminalReflowOverlay({
   contentWidth,
   cwd,
   history,
+  introPrompt,
   interactive,
   prompt,
   showPrompt,
@@ -634,6 +666,7 @@ function TerminalReflowOverlay({
     contentWidth,
     cwd,
     history,
+    introPrompt,
     interactive,
     prompt,
     showPrompt,
@@ -702,10 +735,13 @@ export function Terminal({ interactive = true }: TerminalProps) {
   const [spriteReady, setSpriteReady] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
   const [hasVerticalOverflow, setHasVerticalOverflow] = useState(false);
+  const [promptResumePending, setPromptResumePending] = useState(false);
+  const [spriteReturning, setSpriteReturning] = useState(false);
   const [viewportSize, setViewportSize] = useState({ height: 0, width: 0 });
   const [activeDirection, setActiveDirection] = useState<AnimationDirection>("forward");
   const [spriteFrameIndex, setSpriteFrameIndex] = useState(0);
-  const isMoving = movementKeys.some((key) => pressedKeysRef.current.has(key));
+  const isKeyboardMoving = movementKeys.some((key) => pressedKeysRef.current.has(key));
+  const isMoving = isKeyboardMoving || spriteReturning;
   const activeSprite = isMoving
     ? spriteAnimations[activeDirection][spriteFrameIndex] ?? idleFrame
     : idleFrame;
@@ -713,17 +749,32 @@ export function Terminal({ interactive = true }: TerminalProps) {
     spriteHullIndex[isMoving ? activeDirection : "forward"]?.[
       isMoving ? spriteFrameIndex : 0
     ] ?? null;
-  const showCurrentPrompt = true;
+  const showCurrentPrompt = !controlMode && !promptResumePending;
   const introEntry = history[0]?.id === 0 ? history[0] : null;
   const reflowHistory = introEntry ? history.slice(1) : history;
-  const introTopOffset = ((introEntry ? 1 : 0) + (introEntry?.output.length ?? 0)) * reflowLineHeight;
+  const introTopOffset = (1 + (introEntry?.output.length ?? 0)) * reflowLineHeight;
   const previousHistoryLengthRef = useRef(reflowHistory.length);
 
   useEffect(() => {
-    if (interactive && !controlMode) {
+    if (interactive && !controlMode && !promptResumePending) {
       containerRef.current?.focus();
     }
-  }, [interactive, controlMode]);
+  }, [interactive, controlMode, promptResumePending]);
+
+  useEffect(() => {
+    if (!promptResumePending) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setPromptResumePending(false);
+      if (interactive && !controlMode) {
+        containerRef.current?.focus();
+      }
+    }, 500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [controlMode, interactive, promptResumePending]);
 
   useEffect(() => {
     let cancelled = false;
@@ -857,7 +908,9 @@ export function Terminal({ interactive = true }: TerminalProps) {
       movementOrderRef.current = [];
       setActiveDirection("forward");
       setSpriteFrameIndex(0);
-      containerRef.current?.focus();
+      if (!promptResumePending) {
+        containerRef.current?.focus();
+      }
       return;
     }
 
@@ -870,7 +923,9 @@ export function Terminal({ interactive = true }: TerminalProps) {
         event.preventDefault();
         pressedKeysRef.current.clear();
         movementOrderRef.current = [];
-        exitControlMode();
+        setSpriteReturning(true);
+        setPromptResumePending(true);
+        exitControlMode("Escape control mode.");
         return;
       }
 
@@ -925,10 +980,10 @@ export function Terminal({ interactive = true }: TerminalProps) {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [controlMode, exitControlMode]);
+  }, [controlMode, exitControlMode, promptResumePending]);
 
   useEffect(() => {
-    if (!controlMode) {
+    if (!controlMode && !spriteReturning) {
       if (animationFrameRef.current !== null) {
         window.cancelAnimationFrame(animationFrameRef.current);
       }
@@ -948,11 +1003,11 @@ export function Terminal({ interactive = true }: TerminalProps) {
       }
 
       const pressedKeys = pressedKeysRef.current;
-      const movingLeft = pressedKeys.has("a");
-      const movingRight = pressedKeys.has("d");
-      const movingUp = pressedKeys.has("w");
-      const movingDown = pressedKeys.has("s");
-      const moving = movingLeft || movingRight || movingUp || movingDown;
+      const movingLeft = controlMode && pressedKeys.has("a");
+      const movingRight = controlMode && pressedKeys.has("d");
+      const movingUp = controlMode && pressedKeys.has("w");
+      const movingDown = controlMode && pressedKeys.has("s");
+      const moving = movingLeft || movingRight || movingUp || movingDown || spriteReturning;
 
       if (moving) {
         if (lastAnimationTickRef.current === 0) {
@@ -978,34 +1033,72 @@ export function Terminal({ interactive = true }: TerminalProps) {
       if (moving) {
         let axisX = 0;
         let axisY = 0;
-
-        if (movingLeft) {
-          axisX -= 1;
-        }
-        if (movingRight) {
-          axisX += 1;
-        }
-        if (movingUp) {
-          axisY -= 1;
-        }
-        if (movingDown) {
-          axisY += 1;
-        }
-
-        const magnitude = Math.hypot(axisX, axisY) || 1;
-        const speed = baseMovementSpeed * (pressedKeys.has("shift") ? sprintMultiplier : 1);
-        const moveX = (axisX / magnitude) * speed * deltaSeconds;
-        const moveY = (axisY / magnitude) * speed * deltaSeconds;
         const maxX = Math.max(
           spriteMargin,
           container.clientWidth - spriteSize - spriteMargin - spriteScrollbarGap,
         );
-        const maxY = Math.max(spriteMargin, container.clientHeight - spriteSize - spriteMargin);
+        const targetY = spriteMargin;
+        const maxY = Math.max(targetY, container.clientHeight - spriteSize - spriteMargin);
 
-        setSpritePosition((current) => ({
-          x: Math.min(Math.max(current.x + moveX, spriteMargin), maxX),
-          y: Math.min(Math.max(current.y + moveY, spriteMargin), maxY),
-        }));
+        if (spriteReturning) {
+          setSpritePosition((current) => {
+            const deltaX = maxX - current.x;
+
+            if (Math.abs(deltaX) > 1) {
+              setActiveDirection(deltaX > 0 ? "right" : "left");
+              const stepX = Math.sign(deltaX) * Math.min(Math.abs(deltaX), baseMovementSpeed * deltaSeconds);
+
+              return {
+                x: Math.min(Math.max(current.x + stepX, spriteMargin), maxX),
+                y: current.y,
+              };
+            }
+
+            const deltaY = targetY - current.y;
+
+            if (Math.abs(deltaY) > 1) {
+              setActiveDirection(deltaY > 0 ? "forward" : "back");
+              const stepY = Math.sign(deltaY) * Math.min(Math.abs(deltaY), baseMovementSpeed * deltaSeconds);
+
+              return {
+                x: maxX,
+                y: Math.min(Math.max(current.y + stepY, spriteMargin), maxY),
+              };
+            }
+
+            setSpriteReturning(false);
+            setActiveDirection("forward");
+            setSpriteFrameIndex(0);
+
+            return {
+              x: maxX,
+              y: targetY,
+            };
+          });
+        } else {
+          if (movingLeft) {
+            axisX -= 1;
+          }
+          if (movingRight) {
+            axisX += 1;
+          }
+          if (movingUp) {
+            axisY -= 1;
+          }
+          if (movingDown) {
+            axisY += 1;
+          }
+
+          const magnitude = Math.hypot(axisX, axisY) || 1;
+          const speed = baseMovementSpeed * (pressedKeys.has("shift") ? sprintMultiplier : 1);
+          const moveX = (axisX / magnitude) * speed * deltaSeconds;
+          const moveY = (axisY / magnitude) * speed * deltaSeconds;
+
+          setSpritePosition((current) => ({
+            x: Math.min(Math.max(current.x + moveX, spriteMargin), maxX),
+            y: Math.min(Math.max(current.y + moveY, spriteMargin), maxY),
+          }));
+        }
       }
 
       animationFrameRef.current = window.requestAnimationFrame(updateSprite);
@@ -1018,10 +1111,10 @@ export function Terminal({ interactive = true }: TerminalProps) {
         window.cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [activeDirection, controlMode]);
+  }, [activeDirection, controlMode, spriteReturning]);
 
   const submitPrompt = () => {
-    if (!interactive || controlMode) {
+    if (!interactive || controlMode || promptResumePending) {
       return;
     }
 
@@ -1045,15 +1138,22 @@ export function Terminal({ interactive = true }: TerminalProps) {
   return (
     <section
       ref={containerRef}
-      tabIndex={interactive && !controlMode ? 0 : -1}
+      tabIndex={interactive && !controlMode && !promptResumePending ? 0 : -1}
       className="terminal-shell flex h-full flex-col overflow-hidden border border-violet-400 font-mono text-base leading-[26px] text-amber-50 outline-none focus:outline-none"
       onMouseDown={() => {
-        if (!controlMode) {
+        if (!controlMode && !promptResumePending) {
           containerRef.current?.focus();
         }
       }}
       onKeyDown={(event) => {
-        if (!interactive || controlMode || event.ctrlKey || event.metaKey || event.altKey) {
+        if (
+          !interactive ||
+          controlMode ||
+          promptResumePending ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.altKey
+        ) {
           return;
         }
 
@@ -1099,13 +1199,7 @@ export function Terminal({ interactive = true }: TerminalProps) {
           }`}
         >
           {introEntry ? (
-            <div className="mb-0">
-              <div className="terminal-intro-line whitespace-pre text-lg leading-[26px]">
-                <span className="terminal-prompt-user">{introEntry.user}</span>
-                <span className="terminal-prompt-symbol">:</span>
-                <span className="terminal-prompt-symbol">{introEntry.cwd}</span>
-                <span className="terminal-prompt-symbol">$</span>
-              </div>
+            <div className="mb-0 mt-[26px]">
               {introEntry.output.map((line, index) => (
                 <div
                   key={`intro-${index}`}
@@ -1116,11 +1210,28 @@ export function Terminal({ interactive = true }: TerminalProps) {
               ))}
             </div>
           ) : null}
+          {introEntry ? (
+            <TerminalReflowOverlay
+              contentWidth={viewportSize.width}
+              cwd={cwd}
+              history={[]}
+              introPrompt={{ cwd: introEntry.cwd, user: introEntry.user }}
+              interactive={false}
+              prompt=""
+              showPrompt={false}
+              scrollTop={scrollTop}
+              spritePosition={spritePosition}
+              spriteHull={activeHull}
+              topOffset={0}
+              user={user}
+            />
+          ) : null}
           <TerminalReflowOverlay
             contentWidth={viewportSize.width}
             cwd={cwd}
             history={reflowHistory}
-            interactive={interactive && !controlMode}
+            introPrompt={null}
+            interactive={interactive && !controlMode && !promptResumePending}
             prompt={prompt}
             showPrompt={showCurrentPrompt}
             scrollTop={scrollTop}
