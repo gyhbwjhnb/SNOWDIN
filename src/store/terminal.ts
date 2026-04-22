@@ -3,6 +3,7 @@ import {
   availableCommands,
   defaultTerminalUser,
   githubUrl,
+  initialTerminalOutput,
   isSudoIdentity,
   sudoTerminalUser,
   type DirectoryKey,
@@ -17,6 +18,7 @@ type HistoryEntry = {
 };
 
 type CommandResult = {
+  clearHistory?: boolean;
   cwd?: DirectoryKey;
   nextUser?: string;
   openUrl?: string;
@@ -48,21 +50,6 @@ const sansWhoamiPool = [
 ] as const;
 
 const specialSansReveal = "__TYPE__:Hahaha, you found out I am Sans.";
-
-const initialTerminalOutput = [
-        "      ┌---------------------------------------------------------┐",
-        "     ███████╗███╗   ██╗ ██████╗ ██╗    ██╗██████╗ ██╗███╗   ██╗ │",
-        "     ██╔════╝████╗  ██║██╔═══██╗██║    ██║██╔══██╗██║████╗  ██║ │",
-        "     ███████╗██╔██╗ ██║██║   ██║██║ █╗ ██║██║  ██║██║██╔██╗ ██║ │",
-        "     ╚════██║██║╚██╗██║██║   ██║██║███╗██║██║  ██║██║██║╚██╗██║ │",
-        "     ███████║██║ ╚████║╚██████╔╝╚███╔███╔╝██████╔╝██║██║ ╚████║ │",
-        "     ╚══════╝╚═╝  ╚═══╝ ╚═════╝  ╚══╝╚══╝ ╚═════╝ ╚═╝╚═╝  ╚═══╝ │",
-        "      │                                                         │",
-        "      │                              Welcome to Snowdin         │",
-        "      │                                                         │",
-        "      └---------------------------------------------------------┘",
-        "Type 'help' to see the list of available commands.",
-] as const;
 
 const pickSansWhoami = () => {
   const totalWeight = sansWhoamiPool.reduce((sum, item) => sum + item.weight, 0);
@@ -128,12 +115,20 @@ const executeCommand = (
         nextUser: currentUser,
         output: [
           "help\tShow this message",
+          "clear\tClear terminal output",
           "whoami\tPrint current user",
           "github\tOpen project GitHub page",
           ...(isSudoIdentity(currentUser)
             ? ["control\tControl the sprite with WASD, Shift and Esc"]
             : []),
         ],
+      };
+    case "clear":
+      return {
+        clearHistory: true,
+        cwd: currentDirectory,
+        nextUser: currentUser,
+        output: [],
       };
     case "whoami":
       if (isSudoIdentity(currentUser)) {
@@ -249,16 +244,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       cwd: result.cwd ?? state.cwd,
       prompt: "",
       user: result.nextUser ?? state.user,
-      history: [
-        ...state.history,
-        {
-          id: state.history.length + 1,
-          cwd: state.cwd,
-          input: rawInput,
-          output: result.output,
-          user: state.user,
-        },
-      ],
+      history: result.clearHistory
+        ? []
+        : [
+            ...state.history,
+            {
+              id: state.history.length + 1,
+              cwd: state.cwd,
+              input: rawInput,
+              output: result.output,
+              user: state.user,
+            },
+          ],
     });
 
     return result.openUrl ?? null;

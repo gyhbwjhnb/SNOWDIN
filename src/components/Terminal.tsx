@@ -1,11 +1,16 @@
-import { FormEvent, type ReactElement, useEffect, useRef, useState } from "react";
+import { FormEvent, type ReactElement, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   layoutNextLine,
   prepareWithSegments,
   type LayoutCursor,
   type PreparedTextWithSegments,
 } from "@chenglou/pretext";
-import { defaultTerminalUser, isSudoIdentity, sudoPromptUser } from "../data/site";
+import {
+  defaultTerminalUser,
+  isSudoIdentity,
+  sudoPromptUser,
+  terminalMonoFontFamily,
+} from "../data/site";
 import { getPromptValidity, useTerminalStore } from "../store/terminal";
 
 type TerminalProps = {
@@ -55,9 +60,9 @@ const spriteScrollbarGap = 72;
 const terminalPaddingX = 20;
 const terminalPaddingRight = 52;
 const terminalPaddingY = 20;
-const reflowLineHeight = 28;
-const reflowFont = '18px "Courier New", "SFMono-Regular", Consolas, monospace';
-const reflowBlockGap = 12;
+const reflowLineHeight = 26;
+const reflowFont = `18px ${terminalMonoFontFamily}`;
+const reflowBlockGap = 0;
 const reflowObstacleHorizontalPadding = 0;
 const reflowObstacleVerticalPadding = 0;
 const spriteHullInsetX = 0;
@@ -74,7 +79,7 @@ type ReflowBlock = {
   lineHeight: number;
   naturalText: string;
   parts:
-    | { kind: "prompt"; cwd: string; input: string; user: string }
+    | { kind: "prompt"; cwd: string; input: string; showCursor?: boolean; user: string }
     | { kind: "tabbed"; left: string; right: string }
     | { kind: "typed"; text: string }
     | { kind: "plain"; text: string };
@@ -89,7 +94,9 @@ type ReflowLine = {
         cwd: string;
         end: number;
         input: string;
+        showCursor?: boolean;
         start: number;
+        totalLength: number;
         user: string;
       }
     | { kind: "tabbed"; left: string; right: string }
@@ -114,10 +121,15 @@ type SpriteHullPayload = {
 
 type ReflowOverlayProps = {
   contentWidth: number;
+  cwd: string;
   history: ReturnType<typeof useTerminalStore.getState>["history"];
+  interactive: boolean;
+  prompt: string;
+  showPrompt: boolean;
   scrollTop: number;
   spritePosition: { x: number; y: number };
   spriteHull: SpriteHull | null;
+  user: string;
 };
 
 function getDirectionFromKey(key: MovementKey): AnimationDirection {
@@ -133,24 +145,13 @@ function getDirectionFromKey(key: MovementKey): AnimationDirection {
   }
 }
 
-function PromptLabel({ cwd, user }: { cwd: string; user: string }) {
-  const promptUser = user === defaultTerminalUser ? user : isSudoIdentity(user) ? sudoPromptUser : user;
-
-  return (
-    <>
-      <span className="text-violet-400">{promptUser}</span>
-      <span className="text-amber-400">:</span>
-      <span className="text-amber-400">{cwd}</span>
-      <span className="text-amber-400">$</span>
-    </>
-  );
-}
-
 function renderPromptFragment({
   cwd,
   end,
   input,
+  showCursor,
   start,
+  totalLength,
   user,
 }: Extract<ReflowLine["parts"], { kind: "prompt" }>) {
   const resolvedPromptUser =
@@ -181,6 +182,12 @@ function renderPromptFragment({
 
     offset = segmentEnd;
   });
+
+  if (showCursor && end === totalLength) {
+    fragments.push(
+      <span key={`${start}-${end}-cursor`} className="terminal-prompt-cursor" />,
+    );
+  }
 
   return fragments;
 }
@@ -344,6 +351,19 @@ function carveLineSlotsFromHull(
 
 function buildReflowBlocks(
   history: ReturnType<typeof useTerminalStore.getState>["history"],
+  {
+    cwd,
+    interactive,
+    prompt,
+    showPrompt,
+    user,
+  }: {
+    cwd: string;
+    interactive: boolean;
+    prompt: string;
+    showPrompt: boolean;
+    user: string;
+  },
 ): ReflowBlock[] {
   const blocks: ReflowBlock[] = [];
 
@@ -419,17 +439,50 @@ function buildReflowBlocks(
     });
   });
 
+  if (showPrompt) {
+    const promptUser =
+      user === defaultTerminalUser ? user : isSudoIdentity(user) ? sudoPromptUser : user;
+    const promptText = `${promptUser}:${cwd}$ ${prompt}`.trimEnd();
+
+    blocks.push({
+      className: "is-prompt",
+      displayText: makeFlexibleBreakText(promptText),
+      font: reflowFont,
+      id: "prompt-current",
+      lineHeight: reflowLineHeight,
+      naturalText: promptText,
+      parts: {
+        kind: "prompt",
+        cwd,
+        input: prompt,
+        showCursor: interactive,
+        user,
+      },
+    });
+  }
+
   return blocks;
 }
 
 function buildReflowLayout({
   contentWidth,
+  cwd,
   history,
+  interactive,
+  prompt,
+  showPrompt,
   scrollTop,
   spritePosition,
   spriteHull,
+  user,
 }: ReflowOverlayProps): { contentHeight: number; lines: ReflowLine[] } {
-  const blocks = buildReflowBlocks(history);
+  const blocks = buildReflowBlocks(history, {
+    cwd,
+    interactive,
+    prompt,
+    showPrompt,
+    user,
+  });
   const documentSpritePosition = {
     x: spritePosition.x,
     y: spritePosition.y + scrollTop,
@@ -502,7 +555,9 @@ function buildReflowLayout({
                   cwd: block.parts.cwd,
                   end: visibleCharsConsumed + visibleLineText.length,
                   input: block.parts.input,
+                  showCursor: block.parts.showCursor,
                   start: visibleCharsConsumed,
+                  totalLength: block.naturalText.length,
                   user: block.parts.user,
                 }
               : block.parts.kind === "tabbed"
@@ -550,24 +605,34 @@ function buildReflowLayout({
   });
 
   return {
-    contentHeight: currentTop + terminalPaddingY,
+    contentHeight: currentTop,
     lines,
   };
 }
 
 function TerminalReflowOverlay({
   contentWidth,
+  cwd,
   history,
+  interactive,
+  prompt,
+  showPrompt,
   scrollTop,
   spritePosition,
   spriteHull,
+  user,
 }: ReflowOverlayProps) {
   const { contentHeight, lines } = buildReflowLayout({
     contentWidth,
+    cwd,
     history,
+    interactive,
+    prompt,
+    showPrompt,
     scrollTop,
     spritePosition,
     spriteHull,
+    user,
   });
 
   return (
@@ -614,7 +679,6 @@ export function Terminal({ interactive = true }: TerminalProps) {
   const setPrompt = useTerminalStore((state) => state.setPrompt);
   const runCommand = useTerminalStore((state) => state.runCommand);
   const containerRef = useRef<HTMLElement | null>(null);
-  const historyEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pressedKeysRef = useRef<Set<string>>(new Set());
@@ -628,9 +692,11 @@ export function Terminal({ interactive = true }: TerminalProps) {
   >({});
   const [spriteReady, setSpriteReady] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
+  const [hasVerticalOverflow, setHasVerticalOverflow] = useState(false);
   const [viewportSize, setViewportSize] = useState({ height: 0, width: 0 });
   const [activeDirection, setActiveDirection] = useState<AnimationDirection>("forward");
   const [spriteFrameIndex, setSpriteFrameIndex] = useState(0);
+  const previousHistoryLengthRef = useRef(history.length);
   const promptValidity = getPromptValidity(prompt, cwd, user);
   const isMoving = movementKeys.some((key) => pressedKeysRef.current.has(key));
   const activeSprite = isMoving
@@ -640,6 +706,13 @@ export function Terminal({ interactive = true }: TerminalProps) {
     spriteHullIndex[isMoving ? activeDirection : "forward"]?.[
       isMoving ? spriteFrameIndex : 0
     ] ?? null;
+  const showCurrentPrompt = true;
+
+  useEffect(() => {
+    if (interactive && !controlMode) {
+      inputRef.current?.focus();
+    }
+  }, [interactive, controlMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -668,9 +741,59 @@ export function Terminal({ interactive = true }: TerminalProps) {
     };
   }, []);
 
-  useEffect(() => {
-    historyEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+
+    if (!scroller) {
+      return;
+    }
+
+    const historyLengthChanged = history.length !== previousHistoryLengthRef.current;
+    previousHistoryLengthRef.current = history.length;
+
+    if (!historyLengthChanged) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const currentScroller = scrollRef.current;
+
+      if (!currentScroller) {
+        return;
+      }
+
+      const maxScrollTop = Math.max(0, currentScroller.scrollHeight - currentScroller.clientHeight);
+      setHasVerticalOverflow(maxScrollTop > 1);
+      currentScroller.scrollTop = maxScrollTop <= 1 ? 0 : maxScrollTop;
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
   }, [history]);
+
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+
+    if (!scroller) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const currentScroller = scrollRef.current;
+
+      if (!currentScroller) {
+        return;
+      }
+
+      const maxScrollTop = Math.max(0, currentScroller.scrollHeight - currentScroller.clientHeight);
+      setHasVerticalOverflow(maxScrollTop > 1);
+
+      if (maxScrollTop <= 1 && currentScroller.scrollTop !== 0) {
+        currentScroller.scrollTop = 0;
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [history, prompt, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
     const positionSprite = () => {
@@ -913,7 +1036,12 @@ export function Terminal({ interactive = true }: TerminalProps) {
   return (
     <section
       ref={containerRef}
-      className="terminal-shell flex h-full flex-col overflow-hidden border border-violet-400 font-mono text-base leading-7 text-amber-50"
+      className="terminal-shell flex h-full flex-col overflow-hidden border border-violet-400 font-mono text-base leading-[26px] text-amber-50"
+      onMouseDown={() => {
+        if (!controlMode) {
+          inputRef.current?.focus();
+        }
+      }}
     >
       <div
         className={`terminal-sprite ${controlMode ? "is-controlled" : ""}`}
@@ -929,42 +1057,49 @@ export function Terminal({ interactive = true }: TerminalProps) {
       <div className="min-h-0 flex-1 pr-8">
         <div
           ref={scrollRef}
-          className="terminal-scroll terminal-scroll-reflow h-full overflow-y-scroll px-5 py-5"
+          className={`terminal-scroll terminal-scroll-reflow h-full px-5 py-5 ${
+            hasVerticalOverflow ? "overflow-y-auto" : "overflow-y-hidden"
+          }`}
         >
           <TerminalReflowOverlay
             contentWidth={viewportSize.width}
+            cwd={cwd}
             history={history}
+            interactive={interactive && !controlMode}
+            prompt={prompt}
+            showPrompt={showCurrentPrompt}
             scrollTop={scrollTop}
             spritePosition={spritePosition}
             spriteHull={activeHull}
+            user={user}
           />
-
-          <form onSubmit={handleSubmit}>
-            <label className="flex items-center gap-2">
-              <span className="shrink-0 text-lg">
-                <PromptLabel cwd={cwd} user={user} />
-              </span>
-              <input
-                ref={inputRef}
-                autoFocus={interactive}
-                disabled={!interactive || controlMode}
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                spellCheck={false}
-                autoComplete="off"
-                className={`w-full bg-transparent text-lg outline-none ${
-                  promptValidity === "valid"
-                    ? "text-green-400"
-                    : promptValidity === "invalid"
-                      ? "text-red-400"
-                      : "text-amber-50"
-                } disabled:cursor-not-allowed disabled:text-amber-50/60`}
-              />
-            </label>
-          </form>
-          <div ref={historyEndRef} />
         </div>
       </div>
+
+      <form
+        onSubmit={handleSubmit}
+        className="absolute -left-[9999px] top-0 h-px w-px overflow-hidden opacity-0"
+      >
+        <label>
+          Terminal input
+          <input
+            ref={inputRef}
+            autoFocus={interactive}
+            disabled={!interactive || controlMode}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            spellCheck={false}
+            autoComplete="off"
+            className={`h-px w-px border-0 bg-transparent p-0 text-lg leading-[26px] outline-none ${
+              promptValidity === "valid"
+                ? "text-green-400"
+                : promptValidity === "invalid"
+                  ? "text-red-400"
+                  : "text-amber-50"
+            } disabled:cursor-not-allowed disabled:text-amber-50/60`}
+          />
+        </label>
+      </form>
     </section>
   );
 }
