@@ -8,8 +8,12 @@ export const availableCommands = [
   "whoami",
   "github",
   "sudo",
+  "control",
 ] as const;
 
 export type CommandName = (typeof availableCommands)[number];
 
 export type DirectoryKey = "~";
+
+export const isSudoIdentity = (user: string) =>
+  user === sudoTerminalUser || user === sudoPromptUser || user.endsWith(sudoTerminalUser);
