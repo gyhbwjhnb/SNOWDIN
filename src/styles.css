@@ -249,6 +249,32 @@ body {
   color: #e5e7eb;
 }
 
+.terminal-reflow-line.is-ascii-art {
+  font-size: 8px;
+}
+
+.terminal-ascii-sidebar-box {
+  position: absolute;
+  top: 0;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  background: rgba(20, 20, 20, 0.82);
+  white-space: pre;
+  font: 18px Consolas, "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
+  line-height: 26px;
+  color: #e5e7eb;
+}
+
+.terminal-ascii-sidebar-line {
+  position: absolute;
+  white-space: pre;
+}
+
+.terminal-ascii-sidebar-link {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .terminal-prompt-user {
   color: #a78bfa;
 }

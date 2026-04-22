@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   availableCommands,
+  aboutTerminalOutput,
   defaultTerminalUser,
   githubUrl,
   initialTerminalOutput,
@@ -115,6 +116,7 @@ const executeCommand = (
         nextUser: currentUser,
         output: [
           "help\tShow this message",
+          "about\tShow the about artwork",
           "clear\tClear terminal output",
           "whoami\tPrint current user",
           "github\tOpen project GitHub page",
@@ -122,6 +124,12 @@ const executeCommand = (
             ? ["control\tControl the sprite with WASD, Shift and Esc"]
             : []),
         ],
+      };
+    case "about":
+      return {
+        cwd: currentDirectory,
+        nextUser: currentUser,
+        output: [...aboutTerminalOutput],
       };
     case "clear":
       return {

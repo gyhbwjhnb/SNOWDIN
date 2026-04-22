@@ -6,6 +6,7 @@ import {
   type PreparedTextWithSegments,
 } from "@chenglou/pretext";
 import {
+  aboutSidebarOutput,
   defaultTerminalUser,
   isSudoIdentity,
   sudoPromptUser,
@@ -62,12 +63,15 @@ const terminalPaddingRight = 52;
 const terminalPaddingY = 20;
 const reflowLineHeight = 26;
 const reflowFont = `18px ${terminalMonoFontFamily}`;
+const asciiArtLineHeight = 8;
+const asciiArtFont = `8px ${terminalMonoFontFamily}`;
 const reflowBlockGap = 0;
 const reflowObstacleHorizontalPadding = 0;
 const reflowObstacleVerticalPadding = 0;
 const spriteHullInsetX = 0;
 const spriteHullInsetY = 0;
 const softBreak = "\u200b";
+const nonBreakingSpace = "\u00a0";
 const preparedByKey = new Map<string, PreparedTextWithSegments>();
 const typedProgressById = new Map<string, number>();
 
@@ -79,6 +83,7 @@ type ReflowBlock = {
   id: string;
   lineHeight: number;
   naturalText: string;
+  sidebarLines?: string[];
   parts:
     | { kind: "prompt"; cwd: string; input: string; showCursor?: boolean; user: string }
     | { kind: "tabbed"; left: string; right: string }
@@ -103,6 +108,8 @@ type ReflowLine = {
     | { kind: "tabbed"; left: string; right: string }
     | { kind: "typed"; text: string }
     | { kind: "plain"; text: string };
+  sidebarLines?: string[];
+  sidebarOffset?: number;
   x: number;
   y: number;
 };
@@ -134,6 +141,17 @@ type ReflowOverlayProps = {
   topOffset: number;
   user: string;
 };
+
+type SidebarLayoutLine = {
+  href?: string;
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+};
+
+const asciiSidebarPaddingX = 12;
+const asciiSidebarPaddingY = 10;
 
 function getDirectionFromKey(key: MovementKey): AnimationDirection {
   switch (key) {
@@ -236,8 +254,22 @@ function makeFlexibleBreakText(text: string) {
     .join(" ");
 }
 
+function makeCharacterBreakText(text: string) {
+  return Array.from(text).join(softBreak);
+}
+
+function preserveAllSpaces(text: string) {
+  const trimmedEnd = text.replace(/\s+$/u, "");
+  return trimmedEnd.replaceAll(" ", nonBreakingSpace);
+}
+
 function stripSoftBreaks(text: string) {
   return text.replaceAll(softBreak, "");
+}
+
+function findFirstUrl(text: string) {
+  const match = text.match(/https?:\/\/\S+/u);
+  return match?.[0];
 }
 
 function getPrepared(text: string, font: string) {
@@ -276,6 +308,7 @@ function carveLineSlotsFromHull(
   right: number,
   bandTop: number,
   bandBottom: number,
+  minimumSlotWidth: number,
   spritePosition: { x: number; y: number },
   spriteHull: SpriteHull | null,
 ) {
@@ -341,11 +374,11 @@ function carveLineSlotsFromHull(
 
   const slots = [];
 
-  if (blockedLeft - left >= 24) {
+  if (blockedLeft - left >= minimumSlotWidth) {
     slots.push({ left, right: blockedLeft });
   }
 
-  if (right - blockedRight >= 24) {
+  if (right - blockedRight >= minimumSlotWidth) {
     slots.push({ left: blockedRight, right });
   }
 
@@ -447,27 +480,36 @@ function buildReflowBlocks(
 
       const text = line.replace(/^__TYPE__:/, "");
       const isTyped = line.startsWith("__TYPE__:");
+      const isAsciiArt = entry.input.trim().toLowerCase() === "about";
+      const sidebarLines =
+        isAsciiArt && index === 0
+          ? aboutSidebarOutput.map((sidebarLine) => preserveAllSpaces(sidebarLine))
+          : undefined;
+      const preservedText = preserveAllSpaces(text);
       const displayText =
-        entry.id === 0 && !isTyped
-          ? text
-          : makeFlexibleBreakText(text);
+        isAsciiArt
+          ? makeCharacterBreakText(preservedText)
+          : entry.id === 0 && !isTyped
+          ? preservedText
+          : makeFlexibleBreakText(preservedText);
 
       blocks.push({
         avoidSprite: entry.id !== 0,
-        className: "is-output",
+        className: isAsciiArt ? "is-output is-ascii-art" : "is-output",
         displayText,
-        font: reflowFont,
+        font: isAsciiArt ? asciiArtFont : reflowFont,
         id: `output-${entry.id}-${index}`,
-        lineHeight: reflowLineHeight,
-        naturalText: text,
+        lineHeight: isAsciiArt ? asciiArtLineHeight : reflowLineHeight,
+        naturalText: preservedText,
+        sidebarLines,
         parts: isTyped
           ? {
               kind: "typed",
-              text,
+              text: preservedText,
             }
           : {
               kind: "plain",
-              text,
+              text: preservedText,
             },
       });
     });
@@ -545,11 +587,13 @@ function buildReflowLayout({
     let visibleCharsConsumed = 0;
 
     while (true) {
+      const minimumSlotWidth = block.className.includes("is-ascii-art") ? 8 : 24;
       const carvedSlots = carveLineSlotsFromHull(
         layoutLeft,
         layoutRight,
         currentTop,
         currentTop + block.lineHeight,
+        minimumSlotWidth,
         documentSpritePosition,
         block.avoidSprite ? spriteHull : null,
       ).sort((leftSlot, rightSlot) => leftSlot.left - rightSlot.left);
@@ -622,6 +666,8 @@ function buildReflowLayout({
                       block.parts.kind === "typed" ? ("typed" as const) : ("plain" as const),
                     text: visibleLineText,
                   },
+          sidebarLines: blockLineCount === 0 ? block.sidebarLines : undefined,
+          sidebarOffset: blockLineCount === 0 && block.sidebarLines ? line.width + 300 : undefined,
           x: Math.round(slot.left),
           y: Math.round(currentTop),
         });
@@ -648,6 +694,165 @@ function buildReflowLayout({
   };
 }
 
+function buildSidebarLayout({
+  boxLeft,
+  boxTop,
+  boxWidth,
+  sidebarLines,
+  spriteHull,
+  spritePosition,
+}: {
+  boxLeft: number;
+  boxTop: number;
+  boxWidth: number;
+  sidebarLines: string[];
+  spriteHull: SpriteHull | null;
+  spritePosition: { x: number; y: number };
+}) {
+  const lines: SidebarLayoutLine[] = [];
+  let currentTop = 0;
+
+  sidebarLines.forEach((sourceLine, sourceIndex) => {
+    const naturalText = sourceLine.replaceAll(nonBreakingSpace, " ");
+
+    if (naturalText.length === 0) {
+      currentTop += reflowLineHeight;
+      return;
+    }
+
+    const prepared = getPrepared(makeFlexibleBreakText(naturalText), reflowFont);
+    let cursor: LayoutCursor = { graphemeIndex: 0, segmentIndex: 0 };
+    let fragmentIndex = 0;
+
+    while (true) {
+      const bandTop = boxTop + asciiSidebarPaddingY + currentTop;
+      const bandBottom = bandTop + reflowLineHeight;
+      const slots = carveLineSlotsFromHull(
+        boxLeft + asciiSidebarPaddingX,
+        boxLeft + asciiSidebarPaddingX + boxWidth,
+        bandTop,
+        bandBottom,
+        24,
+        spritePosition,
+        spriteHull,
+      ).map((slot) => ({
+        left: slot.left - (boxLeft + asciiSidebarPaddingX),
+        right: slot.right - (boxLeft + asciiSidebarPaddingX),
+      }));
+
+      if (slots.length === 0) {
+        currentTop += reflowLineHeight;
+        continue;
+      }
+
+      let wroteOnThisBand = false;
+
+      for (const slot of slots) {
+        const line = layoutNextLine(prepared, cursor, slot.right - slot.left);
+
+        if (line === null) {
+          break;
+        }
+
+        const visibleText = stripSoftBreaks(line.text);
+        const href = findFirstUrl(visibleText);
+        lines.push({
+          href,
+          id: `sidebar-${sourceIndex}-${fragmentIndex}`,
+          text: visibleText || nonBreakingSpace,
+          x: Math.round(asciiSidebarPaddingX + slot.left),
+          y: Math.round(asciiSidebarPaddingY + currentTop),
+        });
+        cursor = line.end;
+        fragmentIndex += 1;
+        wroteOnThisBand = true;
+      }
+
+      if (!wroteOnThisBand) {
+        break;
+      }
+
+      currentTop += reflowLineHeight;
+
+      if (layoutNextLine(prepared, cursor, boxWidth) === null) {
+        break;
+      }
+    }
+  });
+
+  return {
+    height: Math.max(currentTop + asciiSidebarPaddingY, reflowLineHeight + asciiSidebarPaddingY * 2),
+    lines,
+  };
+}
+
+function AsciiSidebarBox({
+  contentWidth,
+  lineX,
+  lineY,
+  sidebarLines,
+  sidebarOffset,
+  spriteHull,
+  spritePosition,
+}: {
+  contentWidth: number;
+  lineX: number;
+  lineY: number;
+  sidebarLines: string[];
+  sidebarOffset: number;
+  spriteHull: SpriteHull | null;
+  spritePosition: { x: number; y: number };
+}) {
+  const boxLeft = lineX + sidebarOffset;
+  const boxWidth = Math.max(220, contentWidth - boxLeft - terminalPaddingRight - asciiSidebarPaddingX);
+  const { height, lines } = buildSidebarLayout({
+    boxLeft,
+    boxTop: lineY,
+    boxWidth,
+    sidebarLines,
+    spriteHull,
+    spritePosition,
+  });
+
+  return (
+    <span
+      className="terminal-ascii-sidebar-box"
+      style={{
+        height: `${height}px`,
+        left: `${sidebarOffset}px`,
+        width: `${boxWidth + asciiSidebarPaddingX * 2}px`,
+      }}
+    >
+      {lines.map((sidebarLine) => (
+        <span
+          key={sidebarLine.id}
+          className="terminal-ascii-sidebar-line"
+          style={{ left: `${sidebarLine.x}px`, top: `${sidebarLine.y}px` }}
+        >
+          {sidebarLine.href ? (
+            <>
+              {sidebarLine.text.slice(0, sidebarLine.text.indexOf(sidebarLine.href))}
+              <a
+                className="terminal-ascii-sidebar-link"
+                href={sidebarLine.href}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {sidebarLine.href}
+              </a>
+              {sidebarLine.text.slice(
+                sidebarLine.text.indexOf(sidebarLine.href) + sidebarLine.href.length,
+              )}
+            </>
+          ) : (
+            sidebarLine.text
+          )}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function TerminalReflowOverlay({
   contentWidth,
   cwd,
@@ -662,6 +867,10 @@ function TerminalReflowOverlay({
   topOffset,
   user,
 }: ReflowOverlayProps) {
+  const documentSpritePosition = {
+    x: spritePosition.x,
+    y: spritePosition.y + scrollTop,
+  };
   const { contentHeight, lines } = buildReflowLayout({
     contentWidth,
     cwd,
@@ -705,6 +914,17 @@ function TerminalReflowOverlay({
             ) : (
               line.parts.text
             )}
+            {line.sidebarLines && typeof line.sidebarOffset === "number" ? (
+              <AsciiSidebarBox
+                contentWidth={contentWidth}
+                lineX={line.x}
+                lineY={line.y}
+                sidebarLines={line.sidebarLines}
+                sidebarOffset={line.sidebarOffset}
+                spriteHull={spriteHull}
+                spritePosition={documentSpritePosition}
+              />
+            ) : null}
           </span>
         ))}
       </div>
