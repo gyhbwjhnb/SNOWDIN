@@ -195,6 +195,9 @@ body {
 .terminal-shell {
   position: relative;
   font-family: Consolas, "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
+  border: 1px solid #a78bfa !important;
+  outline: none;
+  box-shadow: none;
   background:
     radial-gradient(circle at top right, rgba(168, 85, 247, 0.1), transparent 24%),
     #141414;
@@ -235,15 +238,15 @@ body {
   position: absolute;
   white-space: pre;
   font: 18px Consolas, "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
-  color: #ffffff;
+  color: #e5e7eb;
 }
 
 .terminal-reflow-line.is-prompt {
-  color: #ffffff;
+  color: #e5e7eb;
 }
 
 .terminal-reflow-line.is-output {
-  color: #ffffff;
+  color: #e5e7eb;
 }
 
 .terminal-prompt-user {
@@ -274,7 +277,7 @@ body {
 }
 
 .terminal-tab-gap {
-  color: #ffffff;
+  color: #e5e7eb;
 }
 
 .terminal-tab-right {
@@ -301,7 +304,12 @@ body {
 
 .terminal-scroll::-webkit-scrollbar-thumb {
   background: #d4d4d4;
-  border: 3px solid #262626;
+  background-clip: padding-box;
+  border-top: 6px solid #262626;
+  border-bottom: 6px solid #262626;
+  border-left: 3px solid #262626;
+  border-right: 3px solid #262626;
+  border-radius: 999px;
 }
 
 button,

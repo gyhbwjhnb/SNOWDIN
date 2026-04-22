@@ -16,7 +16,6 @@ export const initialTerminalOutput = [
   "      │                              Welcome to Snowdin         │",
   "      │                                                         │",
   "      └---------------------------------------------------------┘",
-  "Type 'help' to see the list of available commands.",
 ] as const;
 
 export const availableCommands = [

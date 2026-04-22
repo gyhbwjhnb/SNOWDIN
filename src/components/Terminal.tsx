@@ -1,4 +1,4 @@
-import { FormEvent, type ReactElement, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactElement, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   layoutNextLine,
   prepareWithSegments,
@@ -11,7 +11,7 @@ import {
   sudoPromptUser,
   terminalMonoFontFamily,
 } from "../data/site";
-import { getPromptValidity, useTerminalStore } from "../store/terminal";
+import { useTerminalStore } from "../store/terminal";
 
 type TerminalProps = {
   interactive?: boolean;
@@ -54,7 +54,7 @@ const movementKeys: MovementKey[] = ["w", "a", "s", "d"];
 const spriteFrameDuration = 1000 / 15;
 const baseMovementSpeed = 180;
 const sprintMultiplier = 1.8;
-const spriteSize = 96;
+const spriteSize = 64;
 const spriteMargin = 16;
 const spriteScrollbarGap = 72;
 const terminalPaddingX = 20;
@@ -72,6 +72,7 @@ const preparedByKey = new Map<string, PreparedTextWithSegments>();
 const typedProgressById = new Map<string, number>();
 
 type ReflowBlock = {
+  avoidSprite: boolean;
   className: string;
   displayText: string;
   font: string;
@@ -129,6 +130,7 @@ type ReflowOverlayProps = {
   scrollTop: number;
   spritePosition: { x: number; y: number };
   spriteHull: SpriteHull | null;
+  topOffset: number;
   user: string;
 };
 
@@ -377,6 +379,7 @@ function buildReflowBlocks(
             : entry.user;
       const promptText = `${promptUser}:${entry.cwd}$ ${entry.input}`.trimEnd();
       blocks.push({
+        avoidSprite: entry.id !== 0,
         className: "is-prompt",
         displayText: makeFlexibleBreakText(promptText),
         font: reflowFont,
@@ -397,6 +400,7 @@ function buildReflowBlocks(
         const [left, right = ""] = line.split("\t");
 
         blocks.push({
+          avoidSprite: entry.id !== 0,
           className: "is-output",
           displayText: `${left}      ${right}`,
           font: reflowFont,
@@ -420,6 +424,7 @@ function buildReflowBlocks(
           : makeFlexibleBreakText(text);
 
       blocks.push({
+        avoidSprite: entry.id !== 0,
         className: "is-output",
         displayText,
         font: reflowFont,
@@ -445,6 +450,7 @@ function buildReflowBlocks(
     const promptText = `${promptUser}:${cwd}$ ${prompt}`.trimEnd();
 
     blocks.push({
+      avoidSprite: true,
       className: "is-prompt",
       displayText: makeFlexibleBreakText(promptText),
       font: reflowFont,
@@ -474,6 +480,7 @@ function buildReflowLayout({
   scrollTop,
   spritePosition,
   spriteHull,
+  topOffset,
   user,
 }: ReflowOverlayProps): { contentHeight: number; lines: ReflowLine[] } {
   const blocks = buildReflowBlocks(history, {
@@ -488,7 +495,7 @@ function buildReflowLayout({
     y: spritePosition.y + scrollTop,
   };
   const lines: ReflowLine[] = [];
-  let currentTop = terminalPaddingY;
+  let currentTop = topOffset + terminalPaddingY;
   const layoutLeft = terminalPaddingX;
   const layoutRight = Math.max(
     terminalPaddingX + 24,
@@ -513,7 +520,7 @@ function buildReflowLayout({
         currentTop,
         currentTop + block.lineHeight,
         documentSpritePosition,
-        spriteHull,
+        block.avoidSprite ? spriteHull : null,
       ).sort((leftSlot, rightSlot) => leftSlot.left - rightSlot.left);
       const previewLine =
         block.parts.kind === "prompt"
@@ -620,6 +627,7 @@ function TerminalReflowOverlay({
   scrollTop,
   spritePosition,
   spriteHull,
+  topOffset,
   user,
 }: ReflowOverlayProps) {
   const { contentHeight, lines } = buildReflowLayout({
@@ -632,12 +640,14 @@ function TerminalReflowOverlay({
     scrollTop,
     spritePosition,
     spriteHull,
+    topOffset,
     user,
   });
+  const spacerHeight = Math.max(0, contentHeight - topOffset);
 
   return (
     <>
-      <div aria-hidden="true" style={{ height: `${contentHeight}px` }} />
+      <div aria-hidden="true" style={{ height: `${spacerHeight}px` }} />
       <div className="terminal-reflow-layer" style={{ height: `${contentHeight}px` }}>
         {lines.map((line) => (
           <span
@@ -679,7 +689,6 @@ export function Terminal({ interactive = true }: TerminalProps) {
   const setPrompt = useTerminalStore((state) => state.setPrompt);
   const runCommand = useTerminalStore((state) => state.runCommand);
   const containerRef = useRef<HTMLElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pressedKeysRef = useRef<Set<string>>(new Set());
   const movementOrderRef = useRef<MovementKey[]>([]);
@@ -696,8 +705,6 @@ export function Terminal({ interactive = true }: TerminalProps) {
   const [viewportSize, setViewportSize] = useState({ height: 0, width: 0 });
   const [activeDirection, setActiveDirection] = useState<AnimationDirection>("forward");
   const [spriteFrameIndex, setSpriteFrameIndex] = useState(0);
-  const previousHistoryLengthRef = useRef(history.length);
-  const promptValidity = getPromptValidity(prompt, cwd, user);
   const isMoving = movementKeys.some((key) => pressedKeysRef.current.has(key));
   const activeSprite = isMoving
     ? spriteAnimations[activeDirection][spriteFrameIndex] ?? idleFrame
@@ -707,10 +714,14 @@ export function Terminal({ interactive = true }: TerminalProps) {
       isMoving ? spriteFrameIndex : 0
     ] ?? null;
   const showCurrentPrompt = true;
+  const introEntry = history[0]?.id === 0 ? history[0] : null;
+  const reflowHistory = introEntry ? history.slice(1) : history;
+  const introTopOffset = ((introEntry ? 1 : 0) + (introEntry?.output.length ?? 0)) * reflowLineHeight;
+  const previousHistoryLengthRef = useRef(reflowHistory.length);
 
   useEffect(() => {
     if (interactive && !controlMode) {
-      inputRef.current?.focus();
+      containerRef.current?.focus();
     }
   }, [interactive, controlMode]);
 
@@ -748,8 +759,8 @@ export function Terminal({ interactive = true }: TerminalProps) {
       return;
     }
 
-    const historyLengthChanged = history.length !== previousHistoryLengthRef.current;
-    previousHistoryLengthRef.current = history.length;
+    const historyLengthChanged = reflowHistory.length !== previousHistoryLengthRef.current;
+    previousHistoryLengthRef.current = reflowHistory.length;
 
     if (!historyLengthChanged) {
       return;
@@ -768,7 +779,7 @@ export function Terminal({ interactive = true }: TerminalProps) {
     });
 
     return () => window.cancelAnimationFrame(frameId);
-  }, [history]);
+  }, [reflowHistory]);
 
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
@@ -793,7 +804,7 @@ export function Terminal({ interactive = true }: TerminalProps) {
     });
 
     return () => window.cancelAnimationFrame(frameId);
-  }, [history, prompt, viewportSize.height, viewportSize.width]);
+  }, [reflowHistory, prompt, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
     const positionSprite = () => {
@@ -846,11 +857,11 @@ export function Terminal({ interactive = true }: TerminalProps) {
       movementOrderRef.current = [];
       setActiveDirection("forward");
       setSpriteFrameIndex(0);
-      inputRef.current?.focus();
+      containerRef.current?.focus();
       return;
     }
 
-    inputRef.current?.blur();
+    containerRef.current?.blur();
 
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
@@ -1009,9 +1020,7 @@ export function Terminal({ interactive = true }: TerminalProps) {
     };
   }, [activeDirection, controlMode]);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
+  const submitPrompt = () => {
     if (!interactive || controlMode) {
       return;
     }
@@ -1036,10 +1045,38 @@ export function Terminal({ interactive = true }: TerminalProps) {
   return (
     <section
       ref={containerRef}
-      className="terminal-shell flex h-full flex-col overflow-hidden border border-violet-400 font-mono text-base leading-[26px] text-amber-50"
+      tabIndex={interactive && !controlMode ? 0 : -1}
+      className="terminal-shell flex h-full flex-col overflow-hidden border border-violet-400 font-mono text-base leading-[26px] text-amber-50 outline-none focus:outline-none"
       onMouseDown={() => {
         if (!controlMode) {
-          inputRef.current?.focus();
+          containerRef.current?.focus();
+        }
+      }}
+      onKeyDown={(event) => {
+        if (!interactive || controlMode || event.ctrlKey || event.metaKey || event.altKey) {
+          return;
+        }
+
+        if (event.key === "Enter") {
+          event.preventDefault();
+          submitPrompt();
+          return;
+        }
+
+        if (event.key === "Backspace") {
+          event.preventDefault();
+          setPrompt(prompt.slice(0, -1));
+          return;
+        }
+
+        if (event.key === "Escape") {
+          event.preventDefault();
+          return;
+        }
+
+        if (event.key.length === 1) {
+          event.preventDefault();
+          setPrompt(`${prompt}${event.key}`);
         }
       }}
     >
@@ -1061,45 +1098,39 @@ export function Terminal({ interactive = true }: TerminalProps) {
             hasVerticalOverflow ? "overflow-y-auto" : "overflow-y-hidden"
           }`}
         >
+          {introEntry ? (
+            <div className="mb-0">
+              <div className="terminal-intro-line whitespace-pre text-lg leading-[26px]">
+                <span className="terminal-prompt-user">{introEntry.user}</span>
+                <span className="terminal-prompt-symbol">:</span>
+                <span className="terminal-prompt-symbol">{introEntry.cwd}</span>
+                <span className="terminal-prompt-symbol">$</span>
+              </div>
+              {introEntry.output.map((line, index) => (
+                <div
+                  key={`intro-${index}`}
+                  className="terminal-intro-line whitespace-pre text-lg leading-[26px] text-slate-200"
+                >
+                  {line}
+                </div>
+              ))}
+            </div>
+          ) : null}
           <TerminalReflowOverlay
             contentWidth={viewportSize.width}
             cwd={cwd}
-            history={history}
+            history={reflowHistory}
             interactive={interactive && !controlMode}
             prompt={prompt}
             showPrompt={showCurrentPrompt}
             scrollTop={scrollTop}
             spritePosition={spritePosition}
             spriteHull={activeHull}
+            topOffset={introTopOffset}
             user={user}
           />
         </div>
       </div>
-
-      <form
-        onSubmit={handleSubmit}
-        className="absolute -left-[9999px] top-0 h-px w-px overflow-hidden opacity-0"
-      >
-        <label>
-          Terminal input
-          <input
-            ref={inputRef}
-            autoFocus={interactive}
-            disabled={!interactive || controlMode}
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-            className={`h-px w-px border-0 bg-transparent p-0 text-lg leading-[26px] outline-none ${
-              promptValidity === "valid"
-                ? "text-green-400"
-                : promptValidity === "invalid"
-                  ? "text-red-400"
-                  : "text-amber-50"
-            } disabled:cursor-not-allowed disabled:text-amber-50/60`}
-          />
-        </label>
-      </form>
     </section>
   );
 }
