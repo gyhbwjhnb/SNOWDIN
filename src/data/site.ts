@@ -84,12 +84,12 @@ export const aboutTerminalOutput = [
 ] as const;
 
 export const aboutSidebarOutput = [
-  " 8028",
+  " SNOWDIN",
   "------------------",
   "ABOUT US",
-  "🧑‍🦲One 80   ",
+  "🦖One 80   ",
   "contact: https://github.com/gyhbwjhnb",
-  "🧑‍🦲One 28",
+  "🐊One 28",
   "contact: https://github.com/wwwc0m",
 ] as const;
 

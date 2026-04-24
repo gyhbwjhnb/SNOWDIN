@@ -258,7 +258,7 @@ body {
   top: 0;
   padding: 10px 12px;
   box-sizing: border-box;
-  background: rgba(20, 20, 20, 0.82);
+  background: #141414;
   white-space: pre;
   font: 18px Consolas, "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
   line-height: 26px;

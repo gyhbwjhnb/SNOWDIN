@@ -20,29 +20,37 @@ type TerminalProps = {
 
 type AnimationDirection = "forward" | "back" | "left" | "right";
 type MovementKey = "w" | "a" | "s" | "d";
+type StayingSnapshot = {
+  active: boolean;
+  index: number;
+};
 
 const spriteFrames = import.meta.glob("../../img/*/*.png", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
 
-function getAnimationFrames(direction: AnimationDirection) {
+function getAnimationFrames(folderName: string, filePrefix?: string) {
   return Object.entries(spriteFrames)
-    .filter(([path]) => path.includes(`/img/${direction}/`))
+    .filter(([path]) => path.includes(`/img/${folderName}/`))
     .sort(([leftPath], [rightPath]) => {
-      const leftFrame = Number.parseInt(leftPath.match(/(\d+)\.png$/)?.[1] ?? "0", 10);
-      const rightFrame = Number.parseInt(rightPath.match(/(\d+)\.png$/)?.[1] ?? "0", 10);
+      const prefixPattern = filePrefix ? `${filePrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` : "";
+      const framePattern = new RegExp(`${prefixPattern}(\\d+)\\.png$`);
+      const leftFrame = Number.parseInt(leftPath.match(framePattern)?.[1] ?? "0", 10);
+      const rightFrame = Number.parseInt(rightPath.match(framePattern)?.[1] ?? "0", 10);
       return leftFrame - rightFrame;
     })
     .map(([, assetUrl]) => assetUrl);
 }
 
 const spriteAnimations: Record<AnimationDirection, string[]> = {
-  forward: getAnimationFrames("forward"),
-  back: getAnimationFrames("back"),
-  left: getAnimationFrames("left"),
-  right: getAnimationFrames("right"),
+  forward: getAnimationFrames("forward", "forward"),
+  back: getAnimationFrames("back", "back"),
+  left: getAnimationFrames("left", "left"),
+  right: getAnimationFrames("right", "right"),
 };
+const stayingAnimationFrames = getAnimationFrames("staying_1", "staying1-");
+const stayingSequence = [0, 1, 0, 1, 2, 3, 2, 3];
 
 const fallbackSpriteFrame =
   spriteAnimations.forward[0] ??
@@ -53,6 +61,8 @@ const fallbackSpriteFrame =
 const idleFrame = spriteAnimations.forward[0] ?? fallbackSpriteFrame;
 const movementKeys: MovementKey[] = ["w", "a", "s", "d"];
 const spriteFrameDuration = 1000 / 15;
+const stayingFrameDuration = 220;
+const stayingTriggerDelay = 10_000;
 const baseMovementSpeed = 180;
 const sprintMultiplier = 1.8;
 const spriteSize = 64;
@@ -948,6 +958,9 @@ export function Terminal({ interactive = true }: TerminalProps) {
   const animationFrameRef = useRef<number | null>(null);
   const lastAnimationTickRef = useRef(0);
   const lastMovementTickRef = useRef(0);
+  const idleSinceRef = useRef<number | null>(null);
+  const stayingActiveRef = useRef(false);
+  const stayingIndexRef = useRef(0);
   const [spritePosition, setSpritePosition] = useState({ x: 0, y: 0 });
   const [spriteHullIndex, setSpriteHullIndex] = useState<
     Partial<Record<AnimationDirection, SpriteHull[]>>
@@ -960,20 +973,40 @@ export function Terminal({ interactive = true }: TerminalProps) {
   const [viewportSize, setViewportSize] = useState({ height: 0, width: 0 });
   const [activeDirection, setActiveDirection] = useState<AnimationDirection>("forward");
   const [spriteFrameIndex, setSpriteFrameIndex] = useState(0);
+  const [stayingSnapshot, setStayingSnapshot] = useState<StayingSnapshot>({
+    active: false,
+    index: 0,
+  });
   const isKeyboardMoving = movementKeys.some((key) => pressedKeysRef.current.has(key));
   const isMoving = isKeyboardMoving || spriteReturning;
-  const activeSprite = isMoving
-    ? spriteAnimations[activeDirection][spriteFrameIndex] ?? idleFrame
-    : idleFrame;
+  const activeStayingFrame =
+    stayingAnimationFrames[stayingSequence[stayingSnapshot.index] ?? 0] ?? idleFrame;
+  const activeSprite = stayingSnapshot.active
+    ? activeStayingFrame
+    : isMoving
+      ? spriteAnimations[activeDirection][spriteFrameIndex] ?? idleFrame
+      : idleFrame;
   const activeHull =
-    spriteHullIndex[isMoving ? activeDirection : "forward"]?.[
-      isMoving ? spriteFrameIndex : 0
-    ] ?? null;
+    stayingSnapshot.active
+      ? spriteHullIndex.forward?.[0] ?? null
+      : spriteHullIndex[isMoving ? activeDirection : "forward"]?.[
+          isMoving ? spriteFrameIndex : 0
+        ] ?? null;
   const showCurrentPrompt = !controlMode && !promptResumePending;
   const introEntry = history[0]?.id === 0 ? history[0] : null;
   const reflowHistory = introEntry ? history.slice(1) : history;
   const introTopOffset = (1 + (introEntry?.output.length ?? 0)) * reflowLineHeight;
   const previousHistoryLengthRef = useRef(reflowHistory.length);
+
+  const setStayingState = (nextActive: boolean, nextIndex = 0) => {
+    stayingActiveRef.current = nextActive;
+    stayingIndexRef.current = nextIndex;
+    setStayingSnapshot((current) =>
+      current.active === nextActive && current.index === nextIndex
+        ? current
+        : { active: nextActive, index: nextIndex },
+    );
+  };
 
   useEffect(() => {
     if (interactive && !controlMode && !promptResumePending) {
@@ -1143,6 +1176,8 @@ export function Terminal({ interactive = true }: TerminalProps) {
         event.preventDefault();
         pressedKeysRef.current.clear();
         movementOrderRef.current = [];
+        idleSinceRef.current = null;
+        setStayingState(false);
         setSpriteReturning(true);
         setPromptResumePending(true);
         exitControlMode("Escape control mode.");
@@ -1161,6 +1196,10 @@ export function Terminal({ interactive = true }: TerminalProps) {
 
       if (movementKeys.includes(key as MovementKey)) {
         const movementKey = key as MovementKey;
+        idleSinceRef.current = null;
+        if (stayingActiveRef.current) {
+          setStayingState(false);
+        }
         movementOrderRef.current = [
           ...movementOrderRef.current.filter((item) => item !== movementKey),
           movementKey,
@@ -1203,17 +1242,6 @@ export function Terminal({ interactive = true }: TerminalProps) {
   }, [controlMode, exitControlMode, promptResumePending]);
 
   useEffect(() => {
-    if (!controlMode && !spriteReturning) {
-      if (animationFrameRef.current !== null) {
-        window.cancelAnimationFrame(animationFrameRef.current);
-      }
-
-      animationFrameRef.current = null;
-      lastAnimationTickRef.current = 0;
-      lastMovementTickRef.current = 0;
-      return;
-    }
-
     const updateSprite = (timestamp: number) => {
       const container = containerRef.current;
 
@@ -1228,8 +1256,13 @@ export function Terminal({ interactive = true }: TerminalProps) {
       const movingUp = controlMode && pressedKeys.has("w");
       const movingDown = controlMode && pressedKeys.has("s");
       const moving = movingLeft || movingRight || movingUp || movingDown || spriteReturning;
+      const canTriggerStaying = !spriteReturning && stayingAnimationFrames.length >= 4;
 
       if (moving) {
+        idleSinceRef.current = null;
+        if (stayingActiveRef.current) {
+          setStayingState(false);
+        }
         if (lastAnimationTickRef.current === 0) {
           lastAnimationTickRef.current = timestamp;
         }
@@ -1239,8 +1272,42 @@ export function Terminal({ interactive = true }: TerminalProps) {
           setSpriteFrameIndex((current) => (current + 1) % spriteAnimations[activeDirection].length);
         }
       } else {
-        lastAnimationTickRef.current = timestamp;
-        setSpriteFrameIndex(0);
+        if (canTriggerStaying) {
+          if (idleSinceRef.current === null) {
+            idleSinceRef.current = timestamp;
+          }
+
+          if (
+            !stayingActiveRef.current &&
+            timestamp - idleSinceRef.current >= stayingTriggerDelay
+          ) {
+            setStayingState(true, 0);
+            lastAnimationTickRef.current = timestamp;
+          }
+        } else {
+          idleSinceRef.current = null;
+        }
+
+        if (stayingActiveRef.current) {
+          if (lastAnimationTickRef.current === 0) {
+            lastAnimationTickRef.current = timestamp;
+          }
+
+          if (timestamp - lastAnimationTickRef.current >= stayingFrameDuration) {
+            lastAnimationTickRef.current = timestamp;
+            const nextIndex = stayingIndexRef.current + 1;
+
+            if (nextIndex >= stayingSequence.length) {
+              setStayingState(false);
+              idleSinceRef.current = timestamp;
+            } else {
+              setStayingState(true, nextIndex);
+            }
+          }
+        } else {
+          lastAnimationTickRef.current = timestamp;
+          setSpriteFrameIndex(0);
+        }
       }
 
       if (lastMovementTickRef.current === 0) {
