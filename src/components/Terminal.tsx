@@ -26,11 +26,14 @@ type StayingSnapshot = {
 };
 
 const spriteFrames = import.meta.glob("../../img/*/*.png", {
+  import: "default",
+}) as Record<string, () => Promise<string>>;
+const eagerIdleFrameModule = import.meta.glob("../../img/forward/forward1.png", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
 
-function getAnimationFrames(folderName: string, filePrefix?: string) {
+function getAnimationFrameLoaders(folderName: string, filePrefix?: string) {
   return Object.entries(spriteFrames)
     .filter(([path]) => path.includes(`/img/${folderName}/`))
     .sort(([leftPath], [rightPath]) => {
@@ -39,26 +42,20 @@ function getAnimationFrames(folderName: string, filePrefix?: string) {
       const leftFrame = Number.parseInt(leftPath.match(framePattern)?.[1] ?? "0", 10);
       const rightFrame = Number.parseInt(rightPath.match(framePattern)?.[1] ?? "0", 10);
       return leftFrame - rightFrame;
-    })
-    .map(([, assetUrl]) => assetUrl);
+    });
 }
 
-const spriteAnimations: Record<AnimationDirection, string[]> = {
-  forward: getAnimationFrames("forward", "forward"),
-  back: getAnimationFrames("back", "back"),
-  left: getAnimationFrames("left", "left"),
-  right: getAnimationFrames("right", "right"),
+const spriteAnimationLoaders: Record<AnimationDirection, Array<() => Promise<string>>> = {
+  forward: getAnimationFrameLoaders("forward", "forward").map(([, loader]) => loader),
+  back: getAnimationFrameLoaders("back", "back").map(([, loader]) => loader),
+  left: getAnimationFrameLoaders("left", "left").map(([, loader]) => loader),
+  right: getAnimationFrameLoaders("right", "right").map(([, loader]) => loader),
 };
-const stayingAnimationFrames = getAnimationFrames("staying_1", "staying1-");
+const stayingAnimationLoaders = getAnimationFrameLoaders("staying_1", "staying1-").map(
+  ([, loader]) => loader,
+);
 const stayingSequence = [0, 1, 0, 1, 2, 3, 2, 3];
-
-const fallbackSpriteFrame =
-  spriteAnimations.forward[0] ??
-  spriteAnimations.back[0] ??
-  spriteAnimations.left[0] ??
-  spriteAnimations.right[0] ??
-  "";
-const idleFrame = spriteAnimations.forward[0] ?? fallbackSpriteFrame;
+const idleFrame = eagerIdleFrameModule["../../img/forward/forward1.png"] ?? "";
 const movementKeys: MovementKey[] = ["w", "a", "s", "d"];
 const spriteFrameDuration = 1000 / 15;
 const stayingFrameDuration = 220;
@@ -958,6 +955,10 @@ export function Terminal({ interactive = true }: TerminalProps) {
   const animationFrameRef = useRef<number | null>(null);
   const lastAnimationTickRef = useRef(0);
   const lastMovementTickRef = useRef(0);
+  const loadedDirectionsRef = useRef<Set<AnimationDirection>>(new Set(idleFrame ? ["forward"] : []));
+  const loadingDirectionsRef = useRef<Set<AnimationDirection>>(new Set());
+  const stayingLoadedRef = useRef(false);
+  const stayingLoadingRef = useRef(false);
   const idleSinceRef = useRef<number | null>(null);
   const stayingActiveRef = useRef(false);
   const stayingIndexRef = useRef(0);
@@ -973,6 +974,15 @@ export function Terminal({ interactive = true }: TerminalProps) {
   const [viewportSize, setViewportSize] = useState({ height: 0, width: 0 });
   const [activeDirection, setActiveDirection] = useState<AnimationDirection>("forward");
   const [spriteFrameIndex, setSpriteFrameIndex] = useState(0);
+  const [loadedSpriteAnimations, setLoadedSpriteAnimations] = useState<
+    Record<AnimationDirection, string[]>
+  >({
+    forward: idleFrame ? [idleFrame] : [],
+    back: [],
+    left: [],
+    right: [],
+  });
+  const [loadedStayingFrames, setLoadedStayingFrames] = useState<string[]>([]);
   const [stayingSnapshot, setStayingSnapshot] = useState<StayingSnapshot>({
     active: false,
     index: 0,
@@ -980,11 +990,13 @@ export function Terminal({ interactive = true }: TerminalProps) {
   const isKeyboardMoving = movementKeys.some((key) => pressedKeysRef.current.has(key));
   const isMoving = isKeyboardMoving || spriteReturning;
   const activeStayingFrame =
-    stayingAnimationFrames[stayingSequence[stayingSnapshot.index] ?? 0] ?? idleFrame;
+    loadedStayingFrames[stayingSequence[stayingSnapshot.index] ?? 0] ?? idleFrame;
   const activeSprite = stayingSnapshot.active
     ? activeStayingFrame
     : isMoving
-      ? spriteAnimations[activeDirection][spriteFrameIndex] ?? idleFrame
+      ? loadedSpriteAnimations[activeDirection][spriteFrameIndex] ??
+        loadedSpriteAnimations[activeDirection][0] ??
+        idleFrame
       : idleFrame;
   const activeHull =
     stayingSnapshot.active
@@ -1006,6 +1018,47 @@ export function Terminal({ interactive = true }: TerminalProps) {
         ? current
         : { active: nextActive, index: nextIndex },
     );
+  };
+
+  const requestLoadDirection = (direction: AnimationDirection) => {
+    if (loadedDirectionsRef.current.has(direction) || loadingDirectionsRef.current.has(direction)) {
+      return;
+    }
+
+    const loaders = spriteAnimationLoaders[direction];
+    if (loaders.length === 0) {
+      loadedDirectionsRef.current.add(direction);
+      return;
+    }
+
+    loadingDirectionsRef.current.add(direction);
+    void Promise.all(loaders.map((loader) => loader()))
+      .then((frames) => {
+        loadedDirectionsRef.current.add(direction);
+        setLoadedSpriteAnimations((current) => ({
+          ...current,
+          [direction]: frames,
+        }));
+      })
+      .finally(() => {
+        loadingDirectionsRef.current.delete(direction);
+      });
+  };
+
+  const requestLoadStayingFrames = () => {
+    if (stayingLoadedRef.current || stayingLoadingRef.current || stayingAnimationLoaders.length === 0) {
+      return;
+    }
+
+    stayingLoadingRef.current = true;
+    void Promise.all(stayingAnimationLoaders.map((loader) => loader()))
+      .then((frames) => {
+        stayingLoadedRef.current = true;
+        setLoadedStayingFrames(frames);
+      })
+      .finally(() => {
+        stayingLoadingRef.current = false;
+      });
   };
 
   useEffect(() => {
@@ -1055,6 +1108,22 @@ export function Terminal({ interactive = true }: TerminalProps) {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (isMoving) {
+      requestLoadDirection(activeDirection);
+    }
+  }, [activeDirection, isMoving]);
+
+  useEffect(() => {
+    if (!isMoving && !stayingSnapshot.active && stayingAnimationLoaders.length > 0) {
+      const timeoutId = window.setTimeout(() => {
+        requestLoadStayingFrames();
+      }, Math.max(0, stayingTriggerDelay - 2_000));
+
+      return () => window.clearTimeout(timeoutId);
+    }
+  }, [isMoving, stayingSnapshot.active]);
 
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
@@ -1256,25 +1325,31 @@ export function Terminal({ interactive = true }: TerminalProps) {
       const movingUp = controlMode && pressedKeys.has("w");
       const movingDown = controlMode && pressedKeys.has("s");
       const moving = movingLeft || movingRight || movingUp || movingDown || spriteReturning;
-      const canTriggerStaying = !spriteReturning && stayingAnimationFrames.length >= 4;
+      const canTriggerStaying = !spriteReturning && stayingAnimationLoaders.length >= 4;
 
       if (moving) {
         idleSinceRef.current = null;
         if (stayingActiveRef.current) {
           setStayingState(false);
         }
+        requestLoadDirection(activeDirection);
         if (lastAnimationTickRef.current === 0) {
           lastAnimationTickRef.current = timestamp;
         }
 
         if (timestamp - lastAnimationTickRef.current >= spriteFrameDuration) {
           lastAnimationTickRef.current = timestamp;
-          setSpriteFrameIndex((current) => (current + 1) % spriteAnimations[activeDirection].length);
+          const frameCount = Math.max(1, spriteAnimationLoaders[activeDirection].length);
+          setSpriteFrameIndex((current) => (current + 1) % frameCount);
         }
       } else {
         if (canTriggerStaying) {
           if (idleSinceRef.current === null) {
             idleSinceRef.current = timestamp;
+          }
+
+          if (timestamp - idleSinceRef.current >= Math.max(0, stayingTriggerDelay - 2_000)) {
+            requestLoadStayingFrames();
           }
 
           if (
