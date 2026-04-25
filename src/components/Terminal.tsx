@@ -7,6 +7,7 @@ import {
 } from "@chenglou/pretext";
 import {
   aboutSidebarOutput,
+  aboutSidebarLinks,
   defaultTerminalUser,
   isSudoIdentity,
   sudoPromptUser,
@@ -152,6 +153,8 @@ type ReflowOverlayProps = {
 type SidebarLayoutLine = {
   href?: string;
   id: string;
+  linkEnd?: number;
+  linkStart?: number;
   text: string;
   x: number;
   y: number;
@@ -274,9 +277,8 @@ function stripSoftBreaks(text: string) {
   return text.replaceAll(softBreak, "");
 }
 
-function findFirstUrl(text: string) {
-  const match = text.match(/https?:\/\/\S+/u);
-  return match?.[0];
+function getSidebarLinkSpec(text: string) {
+  return aboutSidebarLinks[text as keyof typeof aboutSidebarLinks];
 }
 
 function getPrepared(text: string, font: string) {
@@ -721,6 +723,9 @@ function buildSidebarLayout({
 
   sidebarLines.forEach((sourceLine, sourceIndex) => {
     const naturalText = sourceLine.replaceAll(nonBreakingSpace, " ");
+    const linkSpec = getSidebarLinkSpec(naturalText);
+    const linkStart = linkSpec ? naturalText.indexOf(linkSpec.label) : -1;
+    const linkEnd = linkSpec ? linkStart + linkSpec.label.length : -1;
 
     if (naturalText.length === 0) {
       currentTop += reflowLineHeight;
@@ -730,6 +735,7 @@ function buildSidebarLayout({
     const prepared = getPrepared(makeFlexibleBreakText(naturalText), reflowFont);
     let cursor: LayoutCursor = { graphemeIndex: 0, segmentIndex: 0 };
     let fragmentIndex = 0;
+    let visibleCharOffset = 0;
 
     while (true) {
       const bandTop = boxTop + asciiSidebarPaddingY + currentTop;
@@ -762,16 +768,26 @@ function buildSidebarLayout({
         }
 
         const visibleText = stripSoftBreaks(line.text);
-        const href = findFirstUrl(visibleText);
+        const fragmentStart = visibleCharOffset;
+        const fragmentEnd = fragmentStart + visibleText.length;
         lines.push({
-          href,
+          href: linkSpec?.href,
           id: `sidebar-${sourceIndex}-${fragmentIndex}`,
+          linkEnd:
+            linkSpec && linkStart >= 0
+              ? Math.min(fragmentEnd, linkEnd) - fragmentStart
+              : undefined,
+          linkStart:
+            linkSpec && linkStart >= 0
+              ? Math.max(fragmentStart, linkStart) - fragmentStart
+              : undefined,
           text: visibleText || nonBreakingSpace,
           x: Math.round(asciiSidebarPaddingX + slot.left),
           y: Math.round(asciiSidebarPaddingY + currentTop),
         });
         cursor = line.end;
         fragmentIndex += 1;
+        visibleCharOffset += visibleText.length;
         wroteOnThisBand = true;
       }
 
@@ -836,20 +852,21 @@ function AsciiSidebarBox({
           className="terminal-ascii-sidebar-line"
           style={{ left: `${sidebarLine.x}px`, top: `${sidebarLine.y}px` }}
         >
-          {sidebarLine.href ? (
+          {sidebarLine.href &&
+          typeof sidebarLine.linkStart === "number" &&
+          typeof sidebarLine.linkEnd === "number" &&
+          sidebarLine.linkStart < sidebarLine.linkEnd ? (
             <>
-              {sidebarLine.text.slice(0, sidebarLine.text.indexOf(sidebarLine.href))}
+              {sidebarLine.text.slice(0, sidebarLine.linkStart)}
               <a
                 className="terminal-ascii-sidebar-link"
                 href={sidebarLine.href}
                 rel="noreferrer"
                 target="_blank"
               >
-                {sidebarLine.href}
+                {sidebarLine.text.slice(sidebarLine.linkStart, sidebarLine.linkEnd)}
               </a>
-              {sidebarLine.text.slice(
-                sidebarLine.text.indexOf(sidebarLine.href) + sidebarLine.href.length,
-              )}
+              {sidebarLine.text.slice(sidebarLine.linkEnd)}
             </>
           ) : (
             sidebarLine.text

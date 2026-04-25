@@ -259,6 +259,7 @@ body {
   padding: 10px 12px;
   box-sizing: border-box;
   background: #141414;
+  pointer-events: auto;
   white-space: pre;
   font: 18px Consolas, "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
   line-height: 26px;
@@ -267,11 +268,13 @@ body {
 
 .terminal-ascii-sidebar-line {
   position: absolute;
+  pointer-events: auto;
   white-space: pre;
 }
 
 .terminal-ascii-sidebar-link {
   color: inherit;
+  pointer-events: auto;
   text-decoration: underline;
 }
 

@@ -88,10 +88,21 @@ export const aboutSidebarOutput = [
   "------------------",
   "ABOUT US",
   "🦖One 80   ",
-  "contact: https://github.com/gyhbwjhnb",
+  "contact: gyhbwjhnb",
   "🐊One 28",
-  "contact: https://github.com/wwwc0m",
+  "contact: wwwc0m",
 ] as const;
+
+export const aboutSidebarLinks = {
+  "contact: gyhbwjhnb": {
+    href: "https://github.com/gyhbwjhnb",
+    label: "gyhbwjhnb",
+  },
+  "contact: wwwc0m": {
+    href: "https://github.com/wwwc0m",
+    label: "wwwc0m",
+  },
+} as const;
 
 export const availableCommands = [
   "help",
