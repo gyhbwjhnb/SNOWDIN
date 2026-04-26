@@ -40,14 +40,14 @@ type TerminalState = {
 export type PromptValidity = "neutral" | "valid" | "invalid";
 
 const sansWhoamiPool = [
-  { name: "Flowey", weight: 1 },
-  { name: "Toriel", weight: 1 },
-  { name: "Papyrus", weight: 1 },
-  { name: "Asriel", weight: 1 },
-  { name: "Asgore", weight: 1 },
-  { name: "Undyne", weight: 1 },
-  { name: "Alphys", weight: 1 },
-  { name: "Sans", weight: 93 },
+  { name: "Flowey", weight: 13 },
+  { name: "Toriel", weight: 13 },
+  { name: "Papyrus", weight: 13 },
+  { name: "Asriel", weight: 13 },
+  { name: "Asgore", weight: 13 },
+  { name: "Undyne", weight: 13 },
+  { name: "Alphys", weight: 13 },
+  { name: "Sans", weight: 9 },
 ] as const;
 
 const specialSansReveal = "__TYPE__:Hahaha, you found out I am Sans.";
