@@ -37,7 +37,7 @@
 
 Requirements:
 
-- Node.js 18+
+- Node.js 24+
 
 Install dependencies:
 
